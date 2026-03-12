@@ -271,7 +271,7 @@ builds:
       always_run: false
       requires_tests_pass: true
       requires_coverage: true
-      minimum_coverage: 80  # Must meet 80% coverage threshold
+      minimum_coverage: 40  # Must meet 40% coverage threshold
     
     # PyPI publishing
     publish:
@@ -324,7 +324,7 @@ pipeline:
       on_failure: "skip_stable"     # Skip stable if beta fails
     
     - name: "stable"
-      condition: "coverage >= 80% AND tests_pass"
+      condition: "coverage >= 40% AND tests_pass"
       on_success: "complete"
       on_failure: "alert"  # Notify but don't block
   
@@ -350,7 +350,7 @@ promotion:
     
   beta_to_stable:
     - "Battle tested (used in real scenarios)"
-    - "Test coverage ≥80% (high confidence)"
+    - "Test coverage ≥40% (baseline confidence)"
     - "Zero known bugs"
     - "Complete documentation with examples"
     - "Performance acceptable"

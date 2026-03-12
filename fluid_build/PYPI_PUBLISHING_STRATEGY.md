@@ -6,7 +6,7 @@ Three-stage build pipeline with smart PyPI versioning:
 
 - **Alpha** (0.7.1a{build}) - Always runs, bleeding edge
 - **Beta** (0.7.1b{build}) - Always runs regardless of test results
-- **Stable** (0.7.1) - Only runs when test coverage ≥80%
+- **Stable** (0.7.1) - Only runs when test coverage ≥40%
 
 ## Build Number Strategy
 
@@ -15,12 +15,12 @@ Every build run increments a single global build counter stored in `.build_numbe
 **Example Run #42:**
 - Alpha: `0.7.1a42`
 - Beta: `0.7.1b42`
-- Stable: `0.7.1` (only if coverage ≥80%)
+- Stable: `0.7.1` (only if coverage ≥40%)
 
 **Example Run #43:**
 - Alpha: `0.7.1a43`
 - Beta: `0.7.1b43`
-- Stable: `0.7.1` (skipped if coverage fails)
+- Stable: `0.7.1` (skipped if coverage <40%)
 
 ## PyPI Folder Structure
 

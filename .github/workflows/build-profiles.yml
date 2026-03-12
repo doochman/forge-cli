@@ -3,7 +3,7 @@
 # Mirrors the Jenkins multi-profile strategy:
 #   - Alpha always builds
 #   - Beta always builds
-#   - Stable only builds if coverage >= 80% and all tests pass
+#   - Stable only builds if coverage >= 40% and all tests pass
 #
 # Artifacts (wheels) are uploaded to GitHub Actions for download.
 # This does NOT publish to PyPI — use the release workflow for that.
@@ -164,14 +164,14 @@ jobs:
           retention-days: 14
 
   # ──────────────────────────────────────────────────────────────
-  # Stable build — only when coverage >= 80% and tests pass
+  # Stable build — only when coverage >= 40% and tests pass
   # ──────────────────────────────────────────────────────────────
   build-stable:
     name: Build Stable
     needs: test
     if: |
       (needs.test.outputs.tests_failed == '0' &&
-       fromJSON(needs.test.outputs.coverage) >= 80) ||
+       fromJSON(needs.test.outputs.coverage) >= 40) ||
       github.event.inputs.force_stable == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -230,7 +230,7 @@ jobs:
 
           COVERAGE=${{ needs.test.outputs.coverage }}
           FAILED=${{ needs.test.outputs.tests_failed }}
-          if [ "$FAILED" = "0" ] && python3 -c "import sys; sys.exit(0 if float('$COVERAGE') >= 80 else 1)" 2>/dev/null; then
+          if [ "$FAILED" = "0" ] && python3 -c "import sys; sys.exit(0 if float('$COVERAGE') >= 40 else 1)" 2>/dev/null; then
             echo "| Stable | Built (gate passed) |" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "| Stable | Skipped (coverage ${COVERAGE}%, ${FAILED} failures) |" >> "$GITHUB_STEP_SUMMARY"

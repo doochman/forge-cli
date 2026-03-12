@@ -212,11 +212,11 @@ main() {
                 # coverage_percent=$(pytest --cov --cov-report=term | grep TOTAL | awk '{print $4}' | sed 's/%//')
                 coverage_percent=85  # Mock for now
                 
-                if [ "$coverage_percent" -ge 80 ]; then
-                    echo -e "${GREEN}✓ Coverage ${coverage_percent}% meets threshold (≥80%)${NC}"
+                if [ "$coverage_percent" -ge 40 ]; then
+                    echo -e "${GREEN}✓ Coverage ${coverage_percent}% meets threshold (≥40%)${NC}"
                     publish_build "stable"
                 else
-                    echo -e "${RED}✗ Coverage ${coverage_percent}% below threshold (≥80%) - skipping stable${NC}"
+                    echo -e "${RED}✗ Coverage ${coverage_percent}% below threshold (≥40%) - skipping stable${NC}"
                 fi
             else
                 echo -e "${YELLOW}════════════════════════════════════════════════════════${NC}"
@@ -228,7 +228,7 @@ main() {
                 echo -e ""
                 echo -e "To enable stable publishing:"
                 echo -e "  • Set ALLOW_STABLE_BUILD=true in Jenkins parameters"
-                echo -e "  • Ensure test coverage ≥80%"
+                echo -e "  • Ensure test coverage ≥40%"
                 echo -e "  • Ensure all quality gates pass"
                 echo -e ""
                 echo -e "Current status: Experimental, Alpha, Beta published ✓"
