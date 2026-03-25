@@ -46,6 +46,7 @@ class CatalogAsset:
     location: Dict[str, Any]  # Platform-specific location info
     schema: Optional[List[Dict[str, Any]]] = None  # From exposes[0].contract.schema
     sensitivity: str = "internal"  # internal, public, confidential
+    contract_yaml: Optional[str] = None  # Raw YAML content of the contract file
 
 
 @dataclass

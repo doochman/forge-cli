@@ -255,6 +255,8 @@ async def publish_contract(
     # Map contract to asset
     try:
         asset = provider.map_contract_to_asset(contract)
+        # Attach raw contract YAML so catalogs can store the full file
+        asset.contract_yaml = contract_path.read_text(encoding="utf-8")
     except Exception as e:
         return PublishResult(
             success=False,

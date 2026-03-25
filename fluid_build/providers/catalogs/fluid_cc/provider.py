@@ -172,6 +172,15 @@ class FluidCommandCenterProvider(BaseCatalogProvider):
             },
         }
 
+        # Include the full contract YAML if available
+        if asset.contract_yaml:
+            import hashlib
+
+            asset_data["contract_yaml"] = asset.contract_yaml
+            asset_data["contract_hash"] = hashlib.sha256(
+                asset.contract_yaml.encode("utf-8")
+            ).hexdigest()
+
         headers = get_auth_headers(self.endpoint, self.auth)
 
         # Debug: Log what we're sending

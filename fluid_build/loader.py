@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 try:
     import yaml  # type: ignore
@@ -26,7 +26,9 @@ except Exception:  # pragma: no cover
     yaml = None  # YAML support optional; JSON still works
 
 
-__all__ = ["load_contract", "load_with_overlay"]
+__all__ = ["load_contract", "load_with_overlay", "compile_contract"]
+
+LOG = logging.getLogger("fluid.loader")
 
 
 def _read_text(path: Path) -> str:
@@ -89,6 +91,193 @@ def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]
     return base
 
 
+# ---------------------------------------------------------------------------
+# $ref resolution — multi-file contract composition
+# ---------------------------------------------------------------------------
+
+_MAX_REF_DEPTH = 20  # safety limit against accidental deep nesting
+
+
+class RefResolutionError(Exception):
+    """Raised when a $ref cannot be resolved."""
+
+
+def _is_ref_node(obj: Any) -> bool:
+    """Return True if *obj* is a dict containing a single ``$ref`` key."""
+    return isinstance(obj, dict) and "$ref" in obj and len(obj) == 1
+
+
+def _parse_ref(ref_value: str) -> Tuple[str, Optional[str]]:
+    """Split a $ref value into (file_path, json_pointer | None).
+
+    Examples:
+        "./schemas/user.yaml"          → ("./schemas/user.yaml", None)
+        "./schemas/user.yaml#/User"    → ("./schemas/user.yaml", "/User")
+        "#/definitions/common"         → ("", "/definitions/common")
+    """
+    if "#" in ref_value:
+        file_part, pointer = ref_value.split("#", 1)
+        return file_part, pointer or None
+    return ref_value, None
+
+
+def _resolve_pointer(obj: Any, pointer: str) -> Any:
+    """Resolve a JSON-pointer style path (e.g. ``/builds/0``) into *obj*.
+
+    Only supports ``/key`` and ``/index`` segments — enough for FLUID contracts.
+    """
+    if not pointer or pointer == "/":
+        return obj
+    parts = pointer.strip("/").split("/")
+    current = obj
+    for part in parts:
+        if isinstance(current, dict):
+            if part not in current:
+                raise RefResolutionError(
+                    f"JSON pointer segment '{part}' not found in object "
+                    f"(available keys: {list(current.keys())})"
+                )
+            current = current[part]
+        elif isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError) as exc:
+                raise RefResolutionError(
+                    f"JSON pointer segment '{part}' is not a valid list index"
+                ) from exc
+        else:
+            raise RefResolutionError(
+                f"Cannot traverse into {type(current).__name__} with pointer segment '{part}'"
+            )
+    return current
+
+
+def _resolve_refs(
+    obj: Any,
+    base_dir: Path,
+    *,
+    _seen: Optional[Set[str]] = None,
+    _depth: int = 0,
+) -> Any:
+    """Recursively resolve ``$ref`` pointers in a parsed contract tree.
+
+    Supports:
+      - External file refs:  ``$ref: ./path/to/file.yaml``
+      - File + pointer:      ``$ref: ./file.yaml#/section``
+      - Same-file pointer:   ``$ref: "#/definitions/x"`` (not yet — reserved)
+      - Refs inside lists:   ``builds: [{ $ref: ./builds/ingest.yaml }]``
+
+    Protections:
+      - Circular reference detection (tracks resolved absolute paths)
+      - Depth limit (``_MAX_REF_DEPTH``) to prevent runaway recursion
+      - Clear error messages with file paths for debugging
+    """
+    if _depth > _MAX_REF_DEPTH:
+        raise RefResolutionError(
+            f"$ref nesting depth exceeded {_MAX_REF_DEPTH} — "
+            f"possible circular reference or very deep nesting"
+        )
+
+    if _seen is None:
+        _seen = set()
+
+    # ── Handle $ref node ──────────────────────────────────────────
+    if _is_ref_node(obj):
+        ref_value = obj["$ref"]
+        if not isinstance(ref_value, str):
+            raise RefResolutionError(f"$ref value must be a string, got {type(ref_value).__name__}")
+
+        file_part, pointer = _parse_ref(ref_value)
+
+        if not file_part:
+            # Same-file pointer refs (#/definitions/x) — return as-is for now;
+            # these would need the root document to resolve, which is a
+            # future enhancement.
+            LOG.debug("skipping_same_file_ref", extra={"ref": ref_value})
+            return obj
+
+        ref_path = (base_dir / file_part).resolve()
+
+        # Circular detection keyed on absolute path + pointer.
+        # Use stack-based tracking: add before descending, remove after.
+        # This allows "diamond" dependencies (same file from multiple
+        # branches) while still catching true cycles (A → B → A).
+        ref_key = f"{ref_path}#{pointer or ''}"
+        if ref_key in _seen:
+            raise RefResolutionError(f"Circular $ref detected: {ref_key}")
+        _seen.add(ref_key)
+
+        if not ref_path.exists():
+            raise RefResolutionError(
+                f"$ref target not found: {ref_value} " f"(resolved to {ref_path})"
+            )
+
+        try:
+            resolved = _parse_file(ref_path)
+        except Exception as e:
+            raise RefResolutionError(f"Failed to parse $ref target '{ref_value}': {e}") from e
+
+        # Apply JSON pointer if present
+        if pointer:
+            try:
+                resolved = _resolve_pointer(resolved, pointer)
+            except RefResolutionError as e:
+                raise RefResolutionError(
+                    f"Failed to resolve pointer '{pointer}' in '{ref_value}': {e}"
+                ) from e
+
+        # Recursively resolve refs in the loaded content
+        result = _resolve_refs(resolved, ref_path.parent, _seen=_seen, _depth=_depth + 1)
+
+        # Pop from ancestry stack so sibling branches can ref the same file
+        _seen.discard(ref_key)
+        return result
+
+    # ── Recurse into dicts ────────────────────────────────────────
+    if isinstance(obj, dict):
+        return {k: _resolve_refs(v, base_dir, _seen=_seen, _depth=_depth) for k, v in obj.items()}
+
+    # ── Recurse into lists ────────────────────────────────────────
+    if isinstance(obj, list):
+        return [_resolve_refs(item, base_dir, _seen=_seen, _depth=_depth) for item in obj]
+
+    # ── Scalars pass through ──────────────────────────────────────
+    return obj
+
+
+def compile_contract(
+    path: Union[str, Path],
+    *,
+    resolve_refs: bool = True,
+    logger: Optional[logging.Logger] = None,
+) -> Dict[str, Any]:
+    """Load a contract and resolve all ``$ref`` pointers into a single document.
+
+    This is the explicit "bundle" / "compile" entry point — equivalent to
+    ``swagger-cli bundle`` for OpenAPI specs.
+
+    Args:
+        path: Path to the root contract file.
+        resolve_refs: If False, skip ref resolution (for debugging).
+        logger: Optional logger for diagnostics.
+
+    Returns:
+        Fully resolved contract dict with no remaining ``$ref`` nodes
+        (except same-file pointers, which are preserved).
+    """
+    log = logger or LOG
+    p = Path(path).resolve()
+    contract = _parse_file(p)
+
+    if not resolve_refs:
+        return contract
+
+    log.info("compile_start", extra={"path": str(p)})
+    compiled = _resolve_refs(contract, p.parent)
+    log.info("compile_done", extra={"path": str(p)})
+    return compiled
+
+
 def _overlay_candidates(contract_path: Path, env: str) -> Tuple[Path, ...]:
     """
     Given a contract path and env name, return likely overlay file candidates.
@@ -118,21 +307,34 @@ def _overlay_candidates(contract_path: Path, env: str) -> Tuple[Path, ...]:
     )
 
 
-def load_contract(path: str | Path) -> Dict[str, Any]:
+def load_contract(path: str | Path, *, resolve_refs: bool = True) -> Dict[str, Any]:
     """
     Load a single FLUID contract file (JSON or YAML).
+
+    By default, any ``$ref`` pointers are resolved transparently so callers
+    always receive a fully-expanded document.  Pass ``resolve_refs=False``
+    to load the raw document without expansion.
     """
     p = Path(path)
-    return _parse_file(p)
+    contract = _parse_file(p)
+    if resolve_refs:
+        contract = _resolve_refs(contract, p.resolve().parent)
+    return contract
 
 
 def load_with_overlay(
     contract_path: str | Path,
     env: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
+    *,
+    resolve_refs: bool = True,
 ) -> Dict[str, Any]:
     """
     Load a contract and, if env is provided, deep-merge a matching overlay.
+
+    ``$ref`` pointers are resolved *before* the overlay is applied so that
+    environment overrides can target any field — including those pulled from
+    external fragments.
 
     Example:
       base: examples/customer360/contract.fluid.yaml
@@ -142,8 +344,8 @@ def load_with_overlay(
     log = logger or logging.getLogger("fluid.loader")
     base_path = Path(contract_path)
 
-    # Load base
-    base = load_contract(base_path)
+    # Load base (with ref resolution)
+    base = load_contract(base_path, resolve_refs=resolve_refs)
 
     # Apply overlay if requested
     if env:

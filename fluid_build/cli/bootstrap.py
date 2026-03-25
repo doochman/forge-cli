@@ -523,6 +523,7 @@ def register_core_commands(sp: argparse._SubParsersAction) -> None:
     _try_register(sp, "auth", "auth")
     _try_register(sp, "marketplace", "marketplace")
     _try_register(sp, "publish", "publish")
+    _try_register(sp, "compile", "compile")
     _try_register(sp, "preview", "preview")
     _try_register(sp, "diff", "diff")
     _try_register(sp, "context", "context")
