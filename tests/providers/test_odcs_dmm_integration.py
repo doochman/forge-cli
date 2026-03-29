@@ -476,13 +476,30 @@ class TestOverlayMergeOdcsServers:
 
     _STAGING_OVERLAY = {
         "exposes": [
-            {"binding": {"location": {"project": "staging-project", "dataset": "staging_dataset", "region": "EU"}}},
-            {"binding": {"location": {"project": "staging-project", "dataset": "staging_dataset", "region": "EU"}}},
+            {
+                "binding": {
+                    "location": {
+                        "project": "staging-project",
+                        "dataset": "staging_dataset",
+                        "region": "EU",
+                    }
+                }
+            },
+            {
+                "binding": {
+                    "location": {
+                        "project": "staging-project",
+                        "dataset": "staging_dataset",
+                        "region": "EU",
+                    }
+                }
+            },
         ]
     }
 
     def _apply_overlay(self, base, overlay):
         from fluid_build.loader import _deep_merge
+
         return _deep_merge(dict(base), overlay)
 
     def test_merged_exposes_preserve_expose_id(self):
@@ -518,12 +535,12 @@ class TestOverlayMergeOdcsServers:
         servers = odcs_a.get("servers", [])
         assert servers, "No servers block in ODCS output"
         for srv in servers:
-            assert srv.get("project") == "staging-project", (
-                f"Expected staging-project, got {srv.get('project')}"
-            )
-            assert srv.get("dataset") == "staging_dataset", (
-                f"Expected staging_dataset, got {srv.get('dataset')}"
-            )
+            assert (
+                srv.get("project") == "staging-project"
+            ), f"Expected staging-project, got {srv.get('project')}"
+            assert (
+                srv.get("dataset") == "staging_dataset"
+            ), f"Expected staging_dataset, got {srv.get('dataset')}"
 
     def test_dmm_dry_run_on_staging_overlay_uses_correct_contract_ids(self):
         """After overlay merge, dry-run ODCS previews carry the right contract URL."""

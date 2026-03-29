@@ -738,11 +738,13 @@ class TestCompileCLIRun:
 # _deep_merge — positional list-of-dicts merge
 # ---------------------------------------------------------------------------
 
+
 class TestDeepMergePositionalLists:
     """_deep_merge must patch list-of-dict items by position."""
 
     def _merge(self, base, overlay):
         from fluid_build.loader import _deep_merge
+
         return _deep_merge(dict(base), overlay)
 
     def test_scalar_list_is_replaced(self):
@@ -754,8 +756,14 @@ class TestDeepMergePositionalLists:
         """Overlay entries patch matching-index base entries."""
         base = {
             "exposes": [
-                {"exposeId": "port_a", "binding": {"location": {"project": "prod", "dataset": "ds"}}},
-                {"exposeId": "port_b", "binding": {"location": {"project": "prod", "dataset": "ds2"}}},
+                {
+                    "exposeId": "port_a",
+                    "binding": {"location": {"project": "prod", "dataset": "ds"}},
+                },
+                {
+                    "exposeId": "port_b",
+                    "binding": {"location": {"project": "prod", "dataset": "ds2"}},
+                },
             ]
         }
         overlay = {
@@ -809,15 +817,16 @@ class TestDeepMergePositionalLists:
                 {
                     "exposeId": "port_x",
                     "lifecycle": {"state": "active"},
-                    "binding": {"platform": "bigquery", "location": {"project": "prod", "dataset": "ds", "table": "t1"}},
+                    "binding": {
+                        "platform": "bigquery",
+                        "location": {"project": "prod", "dataset": "ds", "table": "t1"},
+                    },
                     "qos": {"availability": "99.9%"},
                 }
             ]
         }
         overlay = {
-            "exposes": [
-                {"binding": {"location": {"project": "staging", "dataset": "ds_stg"}}}
-            ]
+            "exposes": [{"binding": {"location": {"project": "staging", "dataset": "ds_stg"}}}]
         }
         result = self._merge(base, overlay)
         expose = result["exposes"][0]
@@ -849,12 +858,18 @@ class TestLoadWithOverlayListMerge:
                 "exposes": [
                     {
                         "exposeId": "port_a",
-                        "binding": {"platform": "bigquery", "location": {"project": "prod", "dataset": "raw"}},
+                        "binding": {
+                            "platform": "bigquery",
+                            "location": {"project": "prod", "dataset": "raw"},
+                        },
                         "qos": {"availability": "99.5%"},
                     },
                     {
                         "exposeId": "port_b",
-                        "binding": {"platform": "bigquery", "location": {"project": "prod", "dataset": "raw"}},
+                        "binding": {
+                            "platform": "bigquery",
+                            "location": {"project": "prod", "dataset": "raw"},
+                        },
                     },
                 ],
             },

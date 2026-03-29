@@ -335,9 +335,7 @@ def _print_publish_result(result):
         # Per-expose ODCS contracts
         for odcs in result.get("odcs_contracts", []):
             status_icon = "✅" if odcs.get("success") else "❌"
-            lines.append(
-                f"[green]{status_icon} ODCS:[/green] {odcs.get('contract_id', '?')}"
-            )
+            lines.append(f"[green]{status_icon} ODCS:[/green] {odcs.get('contract_id', '?')}")
             if odcs.get("url"):
                 lines.append(f"[dim]View at:[/dim] {odcs['url']}")
             if not odcs.get("success") and odcs.get("error"):

@@ -127,7 +127,9 @@ def export_command(
             for eid, odcs in results:
                 out_path = out_dir / f"product.odcs.{eid}.{format}"
                 click.echo(f"✓ Exported {eid} → {out_path}")
-                click.echo(f"  ID: {odcs.get('id')}  status: {odcs.get('status')}  version: {odcs.get('version')}")
+                click.echo(
+                    f"  ID: {odcs.get('id')}  status: {odcs.get('status')}  version: {odcs.get('version')}"
+                )
             return
 
         # ── Single-expose mode ───────────────────────────────────────────────

@@ -192,9 +192,7 @@ class OdcsProvider(BaseProvider):
             results.append((eid, odcs))
         return results
 
-    def _filter_to_expose(
-        self, fluid: Mapping[str, Any], expose_id: str
-    ) -> Dict[str, Any]:
+    def _filter_to_expose(self, fluid: Mapping[str, Any], expose_id: str) -> Dict[str, Any]:
         """
         Return a shallow copy of *fluid* filtered to a single output port.
 
@@ -210,8 +208,7 @@ class OdcsProvider(BaseProvider):
         exposes = [
             e
             for e in scoped.get("exposes", [])
-            if isinstance(e, dict)
-            and (e.get("exposeId") == expose_id or e.get("id") == expose_id)
+            if isinstance(e, dict) and (e.get("exposeId") == expose_id or e.get("id") == expose_id)
         ]
         if not exposes:
             raise ProviderError(

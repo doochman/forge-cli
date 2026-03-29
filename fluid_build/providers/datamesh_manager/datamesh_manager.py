@@ -468,13 +468,10 @@ class DataMeshManagerProvider(BaseProvider):
                     }
                 )
             except ProviderError as exc:
-                self._log.error(
-                    "HTTP error publishing ODCS contract %s: %s", contract_id, exc
-                )
+                self._log.error("HTTP error publishing ODCS contract %s: %s", contract_id, exc)
                 results.append({"contract_id": contract_id, "success": False, "error": str(exc)})
 
         return results
-
 
     # ---- mapping: FLUID -> Entropy Data Product ----------------------------
 
