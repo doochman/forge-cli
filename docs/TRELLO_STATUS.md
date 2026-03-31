@@ -190,10 +190,10 @@
 
 | Card | Priority | Status | Evidence |
 |------|----------|:------:|----------|
-| **10.1** Version Bump to 1.0.0 | P0 | 🟡 | Versions consistent (`pyproject.toml` = `__init__.py` = `0.7.1`). Still at 0.7.1, not bumped to 1.0.0. **`CHANGELOG.md` created** with full history (0.5.7 → 0.7.1 → Unreleased). |
+| **10.1** Version Bump to 1.0.0 | P0 | 🟡 | Versions consistent (`pyproject.toml` = `__init__.py` = `0.7.7`). Still at 0.7.7, not bumped to 1.0.0. **`CHANGELOG.md` created** with full history (0.5.7 → 0.7.1 → 0.7.6 → 0.7.7 → Unreleased). |
 | **10.3** Publish to Test PyPI | P0 | ❌ | No Test PyPI workflow or evidence of test publish. |
-| **10.4** Publish to PyPI | P0 | 🟡 | `pyproject.toml` has build config + PyPI badge suggests it's already published at 0.7.1. But **no automated publish workflow** in CI. |
-| **10.5** Create GitHub Release | P0 | ❌ | No release notes in CLI repo (exist in `fluid-forge-docs/docs/RELEASE_NOTES_0.7.1.md`). No tag-triggered release workflow. |
+| **10.4** Publish to PyPI | P0 | 🟡 | `pyproject.toml` has build config + PyPI badge suggests it's already published at 0.7.7. But **no automated publish workflow** in CI. |
+| **10.5** Create GitHub Release | P0 | ❌ | No release notes in CLI repo (docs still carry the historical `fluid-forge-docs/docs/RELEASE_NOTES_0.7.1.md`). No tag-triggered release workflow. |
 | **10.6** Launch Announcement | P0 | ❌ | No announcement or blog content in repo. |
 
 ### Remaining work — Epic 10

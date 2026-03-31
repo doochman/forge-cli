@@ -1,0 +1,146 @@
+name: healthcare
+domain: healthcare
+description: Expert in healthcare data products, HIPAA compliance, and clinical analytics
+
+questions:
+  - key: product_type
+    question: What type of healthcare product are you building?
+    type: choice
+    required: true
+    choices:
+      - label: Patient Analytics
+        value: patient_analytics
+        aliases: ["patient", "patient insights"]
+      - label: Clinical Research
+        value: clinical_research
+        aliases: ["research", "clinical studies"]
+      - label: Population Health
+        value: population_health
+        aliases: ["population", "public health"]
+      - label: EHR Integration
+        value: ehr_integration
+        aliases: ["ehr", "emr", "clinical integration"]
+      - label: Drug Discovery
+        value: drug_discovery
+        aliases: ["drug", "discovery", "r and d"]
+  - key: data_sources
+    question: What data sources will you use?
+    type: text
+    required: true
+    default: EHR data, claims data, lab results
+  - key: hipaa_required
+    question: Is HIPAA compliance required?
+    type: choice
+    default: "yes"
+    choices:
+      - label: "Yes"
+        value: "yes"
+        aliases: ["y", "yeah", "yep", "sure", "required"]
+      - label: "No"
+        value: "no"
+        aliases: ["n", "nope", "not required"]
+  - key: phi_handling
+    question: Will you handle PHI (Protected Health Information)?
+    type: choice
+    default: "yes"
+    choices:
+      - label: "Yes"
+        value: "yes"
+        aliases: ["phi", "full phi"]
+      - label: "No"
+        value: "no"
+        aliases: ["no phi"]
+      - label: De-identified only
+        value: deidentified_only
+        aliases: ["deidentified", "de identified", "masked"]
+
+resolver_defaults:
+  product_type: patient_analytics
+  hipaa_required: "yes"
+  phi_handling: "yes"
+
+suggestion_defaults:
+  recommended_template: analytics-template
+  recommended_provider: gcp
+  recommended_patterns: []
+  architecture_suggestions:
+    - Use FHIR standards for interoperability
+    - Implement HL7 message processing if needed
+    - Consider federated learning for privacy
+    - Set up secure data sharing mechanisms
+  best_practices:
+    - Use standardized medical codes (ICD-10, SNOMED)
+    - Implement data quality checks for clinical data
+    - Document all data transformations
+    - Set up monitoring for data anomalies
+    - Implement version control for algorithms
+  technology_stack: []
+  security_requirements: []
+
+rules:
+  - when:
+      all:
+        - field: product_type
+          equals: clinical_research
+    actions:
+      - op: set
+        path: recommended_template
+        value: clinical-research-template
+      - op: append_unique
+        path: technology_stack
+        value: ["Python", "R", "Jupyter"]
+  - when:
+      all:
+        - field: product_type
+          equals: population_health
+    actions:
+      - op: set
+        path: recommended_template
+        value: population-health-template
+      - op: append_unique
+        path: recommended_patterns
+        value: cohort_analysis
+  - when:
+      all:
+        - field: hipaa_required
+          equals: "yes"
+    actions:
+      - op: append_unique
+        path: security_requirements
+        value:
+          - Implement HIPAA-compliant data encryption
+          - Set up BAA (Business Associate Agreement) tracking
+          - Enable comprehensive audit logging
+          - Implement access controls with MFA
+          - Set up breach notification procedures
+          - Regular HIPAA compliance audits
+  - when:
+      all:
+        - field: phi_handling
+          equals: "yes"
+    actions:
+      - op: append_unique
+        path: security_requirements
+        value:
+          - Implement PHI data masking
+          - Use secure enclaves for PHI processing
+          - Enable data lineage for PHI
+          - Set up automatic PHI detection
+      - op: append_unique
+        path: architecture_suggestions
+        value: Separate PHI data into secure zones
+  - when:
+      all:
+        - field: phi_handling
+          equals: deidentified_only
+    actions:
+      - op: append_unique
+        path: architecture_suggestions
+        value: Implement de-identification pipeline at ingestion
+      - op: append_unique
+        path: best_practices
+        value: Validate de-identification meets Safe Harbor or Expert Determination
+
+next_step_tips:
+  - Ensure HIPAA compliance measures are in place
+  - Review PHI handling procedures

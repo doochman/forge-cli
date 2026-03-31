@@ -39,6 +39,7 @@ from fluid_build.cli.forge_copilot_llm_providers import (
 )
 from fluid_build.cli.forge_copilot_runtime import (
     _build_scaffold_decision,
+    build_capability_matrix,
     build_clarification_system_prompt,
     build_seed_contract,
     build_user_prompt,
@@ -594,6 +595,41 @@ class TestDiscovery:
 
 
 class TestGenerationValidation:
+    def test_build_capability_matrix_falls_back_to_builtin_providers_when_registry_listing_fails(
+        self,
+    ):
+        with patch(
+            "fluid_build.forge.core.registry.provider_registry.list_available",
+            side_effect=RuntimeError("provider registry unavailable"),
+        ):
+            with patch(
+                "fluid_build.forge.core.registry.template_registry.list_available",
+                return_value=[],
+            ):
+                capability_matrix = build_capability_matrix()
+
+        assert capability_matrix["providers"] == ["local", "gcp", "aws", "snowflake"]
+        assert capability_matrix["warnings"]
+        assert "couldn't list local providers" in capability_matrix["warnings"][0].lower()
+
+    def test_build_capability_matrix_keeps_verified_providers_when_one_builtin_check_fails(self):
+        with patch(
+            "fluid_build.forge.core.registry.provider_registry.list_available",
+            return_value=["local", "gcp", "aws"],
+        ):
+            with patch(
+                "fluid_build.forge.core.registry.provider_registry.get",
+                side_effect=lambda name: None if name == "aws" else object(),
+            ):
+                with patch(
+                    "fluid_build.forge.core.registry.template_registry.list_available",
+                    return_value=[],
+                ):
+                    capability_matrix = build_capability_matrix()
+
+        assert capability_matrix["providers"] == ["local", "gcp"]
+        assert any("aws provider" in warning.lower() for warning in capability_matrix["warnings"])
+
     @patch("fluid_build.cli.forge_copilot_runtime.FluidSchemaManager")
     def test_validate_generated_result_checks_provider_engine_compatibility(
         self, mock_schema_manager
@@ -613,6 +649,16 @@ class TestGenerationValidation:
 
         assert not warnings
         assert any("not supported for provider 'aws'" in error for error in errors)
+
+    def test_build_scaffold_decision_defaults_to_local_when_provider_list_is_empty(self):
+        decision = _build_scaffold_decision(
+            {"project_goal": "Simple analytics project"},
+            DiscoveryReport(workspace_roots=["/tmp/project"]),
+            {"providers": [], "templates": {"starter": {}}},
+        )
+
+        assert decision.provider == "local"
+        assert decision.provider_source == "default"
 
     def test_generate_copilot_artifacts_retries_and_recovers(self):
         payload = {

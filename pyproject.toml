@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fluid-forge"
-version = "0.7.6"
+version = "0.7.7"
 description = "FLUID Build System: plan/apply/visualize data products across providers (GCP, Snowflake, Local) with policy & contract tests."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -146,6 +146,7 @@ include = ["fluid_build*"]
 # Ensure non-.py assets ship in wheels (schemas, templates, static HTML, etc.)
 [tool.setuptools.package-data]
 fluid_build = [
+  "cli/agent_specs/**/*.yaml",
   "schemas/**/*.json",
   "schemas/**/*.yaml",
   "templates/**/*.j2",

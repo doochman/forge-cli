@@ -254,7 +254,7 @@ When `release.yml` runs, the `pypa/gh-action-pypi-publish` action uses GitHub's
 OIDC token to authenticate with PyPI. No secrets to manage or rotate.
 
 ```
-Tag push (v0.7.1) → release.yml → quality-gate → build → publish-pypi
+Tag push (v0.7.7) → release.yml → quality-gate → build → publish-pypi
                                                         → github-release
                                                         → docker (GHCR)
 ```
@@ -272,7 +272,7 @@ GHCR uses `GITHUB_TOKEN` — no additional setup needed for public repos.
 - [ ] Users will pull with:
   ```bash
   docker pull ghcr.io/agentics-rising/forge-cli:latest
-  docker pull ghcr.io/agentics-rising/forge-cli:0.7.1
+  docker pull ghcr.io/agentics-rising/forge-cli:0.7.7
   docker pull ghcr.io/agentics-rising/forge-cli:alpha-latest
   ```
 
@@ -324,18 +324,18 @@ Once everything above is done:
 
 ```bash
 # 1. Push a pre-release tag to test the full pipeline
-git tag v0.7.1a1
-git push public v0.7.1a1
+git tag v0.7.7a1
+git push public v0.7.7a1
 
 # 2. Watch the release workflow:
 #    https://github.com/agentics-rising/forge-cli/actions/workflows/release.yml
 
 # 3. Verify TestPyPI:
 pip install --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ fluid-forge==0.7.1a1
+  --extra-index-url https://pypi.org/simple/ fluid-forge==0.7.7a1
 
 # 4. Verify GHCR:
-docker pull ghcr.io/agentics-rising/forge-cli:0.7.1a1
+docker pull ghcr.io/agentics-rising/forge-cli:0.7.7a1
 
 # 5. Verify GitHub Release exists with wheel attached
 ```
@@ -344,15 +344,15 @@ docker pull ghcr.io/agentics-rising/forge-cli:0.7.1a1
 
 ```bash
 # Only after the pre-release pipeline succeeds:
-git tag v0.7.1
-git push public v0.7.1
+git tag v0.7.7
+git push public v0.7.7
 
 # This will:
 #   - Run quality gate (lint, test, security)
 #   - Build wheel + sdist
 #   - Publish to PyPI (requires reviewer approval via pypi environment)
 #   - Create GitHub Release with changelog
-#   - Build and push Docker image tagged 0.7.1 + latest
+#   - Build and push Docker image tagged 0.7.7 + latest
 ```
 
 ### 12c. Verify

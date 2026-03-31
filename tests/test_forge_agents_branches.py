@@ -25,6 +25,7 @@ from fluid_build.cli.forge_agents import (
     FinanceAgent,
     HealthcareAgent,
     RetailAgent,
+    TelcoAgent,
     get_agent,
     list_agents,
 )
@@ -269,7 +270,7 @@ class TestFinanceAgent:
     def test_analyze_no_compliance(self):
         agent = FinanceAgent()
         result = agent.analyze_requirements({"compliance_requirements": "none"})
-        assert len(result["security_requirements"]) == 0
+        assert any("GDPR-aligned retention" in item for item in result["security_requirements"])
 
 
 # ===================== HealthcareAgent =====================
@@ -364,6 +365,41 @@ class TestRetailAgent:
     def test_analyze_medium_scale(self):
         result = RetailAgent().analyze_requirements({"scale": "medium (1M-100M)"})
         assert result["recommended_provider"] == "gcp"
+        assert any("least-privilege RBAC" in item for item in result["security_requirements"])
+
+
+# ===================== TelcoAgent =====================
+
+
+class TestTelcoAgent:
+    def test_init(self):
+        agent = TelcoAgent()
+        assert agent.domain == "telco"
+
+    def test_get_questions(self):
+        qs = TelcoAgent().get_questions()
+        assert len(qs) >= 4
+        assert qs[0]["choices"][0]["label"] == "Customer & Billing Intelligence"
+
+    def test_analyze_customer_billing(self):
+        result = TelcoAgent().analyze_requirements(
+            {"product_type": "customer_billing_intelligence"}
+        )
+        assert "customer360" in result["recommended_template"]
+        assert "party_account_model" in result["recommended_patterns"]
+
+    def test_analyze_friendly_telco_phrase(self):
+        result = TelcoAgent().analyze_requirements({"product_type": "network assurance"})
+        assert "network_topology_analytics" in result["recommended_patterns"]
+
+    def test_analyze_sid_resource_focus(self):
+        result = TelcoAgent().analyze_requirements({"sid_domain_focus": "network inventory"})
+        assert any("ResourceSpecification" in item for item in result["architecture_suggestions"])
+
+    def test_analyze_real_time_operations(self):
+        result = TelcoAgent().analyze_requirements({"real_time_operations": "yes"})
+        assert "streaming_pipeline" in result["recommended_patterns"]
+        assert any("GDPR-aligned retention" in item for item in result["security_requirements"])
 
 
 # ===================== Registry functions =====================
@@ -374,6 +410,7 @@ class TestRegistry:
         assert "finance" in DOMAIN_AGENTS
         assert "healthcare" in DOMAIN_AGENTS
         assert "retail" in DOMAIN_AGENTS
+        assert "telco" in DOMAIN_AGENTS
 
     def test_get_agent_finance(self):
         agent = get_agent("finance")
@@ -387,17 +424,22 @@ class TestRegistry:
         agent = get_agent("retail")
         assert isinstance(agent, RetailAgent)
 
+    def test_get_agent_telco(self):
+        agent = get_agent("telco")
+        assert isinstance(agent, TelcoAgent)
+
     def test_get_agent_not_found(self):
         with pytest.raises(ValueError, match="not found"):
             get_agent("unknown")
 
     def test_list_agents(self):
         agents = list_agents()
-        assert len(agents) == 3
+        assert len(agents) == 4
         names = [a["name"] for a in agents]
         assert "finance" in names
         assert "healthcare" in names
         assert "retail" in names
+        assert "telco" in names
         for a in agents:
             assert "description" in a
             assert "domain" in a

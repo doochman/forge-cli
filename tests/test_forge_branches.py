@@ -160,6 +160,32 @@ class TestCopilotAgent:
         assert "make validate" not in text
         assert "fluid market search" not in text
 
+    @patch("fluid_build.cli.forge_copilot_agent.LOG.warning")
+    def test_prepare_runtime_inputs_logs_capability_warnings(self, mock_warning):
+        agent = self._make_agent()
+        llm_config = MagicMock()
+        discovery_report = MagicMock()
+        with patch.object(agent, "_resolve_llm_config_dependency", return_value=llm_config):
+            with patch.object(
+                agent, "_discover_local_context_dependency", return_value=discovery_report
+            ):
+                with patch.object(agent, "_load_project_memory", return_value=None):
+                    with patch.object(
+                        agent,
+                        "_build_capability_matrix_dependency",
+                        return_value={
+                            "providers": ["local"],
+                            "templates": {"starter": {}},
+                            "warnings": ["Copilot couldn't inspect the aws provider."],
+                        },
+                    ):
+                        runtime_inputs = agent.prepare_runtime_inputs({})
+
+        assert runtime_inputs["capability_warnings"] == [
+            "Copilot couldn't inspect the aws provider."
+        ]
+        mock_warning.assert_called_once()
+
     def test_analyze_requirements_ml(self):
         agent = self._make_agent()
         context = {
@@ -786,6 +812,51 @@ class TestRunAICopilotMode:
         logger = logging.getLogger("test")
         result = run_ai_copilot_mode(args, logger)
         assert result == 0
+
+    @patch("fluid_build.cli.forge_modes.print_dialog_status")
+    @patch("fluid_build.cli.forge_modes.run_adaptive_copilot_interview")
+    @patch("fluid_build.cli.forge.CopilotAgent")
+    def test_copilot_interactive_provider_warning_continues(
+        self,
+        mock_agent_cls,
+        mock_interview,
+        mock_print_dialog_status,
+    ):
+        from fluid_build.cli.forge import run_ai_copilot_mode
+
+        mock_agent = MagicMock()
+        mock_agent.prepare_runtime_inputs.return_value = {
+            "llm_config": MagicMock(),
+            "discovery_report": MagicMock(),
+            "project_memory": None,
+            "capability_matrix": {"providers": ["local"], "templates": {"starter": {}}},
+            "capability_warnings": ["Copilot couldn't inspect the aws provider."],
+        }
+        mock_agent.create_project.return_value = True
+        mock_agent_cls.return_value = mock_agent
+        mock_state = MagicMock()
+        mock_state.finalize.return_value = {
+            "project_goal": "test",
+            "data_sources": "local files",
+            "use_case": "analytics",
+            "complexity": "intermediate",
+        }
+        mock_interview.return_value = mock_state
+        args = MagicMock()
+        args.context = None
+        args.non_interactive = False
+        args.target_dir = "/tmp/test"
+        logger = logging.getLogger("test")
+
+        result = run_ai_copilot_mode(args, logger)
+
+        assert result == 0
+        assert any(
+            call.kwargs.get("status") == "warning"
+            and "couldn't fully verify some local providers"
+            in call.kwargs.get("message", "").lower()
+            for call in mock_print_dialog_status.call_args_list
+        )
 
 
 class TestMemoryManagement:

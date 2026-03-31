@@ -61,6 +61,7 @@ from .registry import (
 )
 
 logger = logging.getLogger(__name__)
+COPILOT_WARNING_ONLY_PROVIDERS = {"local", "gcp", "aws", "snowflake"}
 
 
 class ForgeEngine:
@@ -682,7 +683,19 @@ class ForgeEngine:
                 provider_config = self.project_config.get("provider_config", {})
                 is_valid, provider_errors = provider.validate_configuration(provider_config)
                 if not is_valid:
-                    errors.extend(provider_errors)
+                    provider_name = self.project_config.get("provider")
+                    if (
+                        self.project_config.get("copilot_generated_contract")
+                        and provider_name in COPILOT_WARNING_ONLY_PROVIDERS
+                    ):
+                        warnings.extend(
+                            [
+                                f"Provider setup for '{provider_name}' still needs review: {provider_error}"
+                                for provider_error in provider_errors
+                            ]
+                        )
+                    else:
+                        errors.extend(provider_errors)
             else:
                 errors.append(f"Invalid provider: {self.project_config.get('provider')}")
 

@@ -23,6 +23,11 @@ from __future__ import annotations
 import argparse
 
 from fluid_build import __version__ as _VERSION
+from fluid_build.cli.forge_ui import (
+    FORGE_DIALOG_HINT,
+    FORGE_FLEXIBLE_INPUT_SUMMARY,
+    FORGE_WORKFLOW_STEPS,
+)
 
 try:
     from rich import box
@@ -319,7 +324,7 @@ def print_forge_help() -> None:
     options_table.add_column("Description", style="bright_white")
 
     options_table.add_row("--mode, -m", "Creation mode (copilot/agent/template/blueprint)")
-    options_table.add_row("--agent, -a", "Specific AI agent (finance/healthcare/retail)")
+    options_table.add_row("--agent, -a", "Specific AI agent (finance/healthcare/retail/telco)")
     options_table.add_row("--template, -t", "Project template name")
     options_table.add_row("--provider, -p", "Infrastructure provider (gcp/aws/snowflake/local)")
     options_table.add_row("--blueprint, -b", "Enterprise blueprint name")
@@ -400,6 +405,11 @@ def print_forge_help() -> None:
             "Finance-specific best practices",
         ),
         (
+            "TM Forum SID Telco Agent:",
+            "fluid forge --mode agent --agent telco",
+            "Telecom design guidance aligned to TM Forum SID",
+        ),
+        (
             "Enterprise Blueprint:",
             "fluid forge --mode blueprint --blueprint customer-360",
             "Complete enterprise solution",
@@ -419,15 +429,17 @@ def print_forge_help() -> None:
 
     # Workflow
     console.print()
+    workflow_text = "\n".join(
+        (
+            f"[bold]Step {index}:[/bold] {step}"
+            if "fluid forge" not in step
+            else f"[bold]Step {index}:[/bold] Run [bright_cyan]fluid forge[/bright_cyan]"
+        )
+        for index, step in enumerate(FORGE_WORKFLOW_STEPS, start=1)
+    )
     workflow_panel = Panel(
-        "[bold]Step 1:[/bold] Run [bright_cyan]fluid forge[/bright_cyan]\n"
-        "[bold]Step 2:[/bold] Answer a few questions about your project using a number, short phrase, or your own wording\n"
-        "[bold]Step 3:[/bold] Copilot discovers local metadata and generates a full contract\n"
-        "[bold]Step 4:[/bold] Forge validates and repairs the contract if needed\n"
-        "[bold]Step 5:[/bold] Forge scaffolds only after validation passes\n"
-        "[bold]Step 6:[/bold] Forge shows how memory influenced the run\n"
-        "[bold]Step 7:[/bold] Save project-scoped memory only if you explicitly opt in\n\n"
-        "[dim]💡 First time? Just run [bright_cyan]fluid forge[/bright_cyan] and follow the prompts![/dim]",
+        workflow_text
+        + "\n\n[dim]💡 First time? Just run [bright_cyan]fluid forge[/bright_cyan] and follow the prompts![/dim]",
         title="[bold bright_green]🚀 How It Works[/bold bright_green]",
         border_style="bright_green",
         padding=(1, 2),
@@ -439,7 +451,7 @@ def print_forge_help() -> None:
     tips_panel = Panel(
         "💡 [bold]Pro Tips:[/bold]\n\n"
         "  • Start with [bright_cyan]--mode copilot[/bright_cyan] for AI-guided creation\n"
-        "  • Interactive prompts accept numbers, short phrases, and natural-language answers\n"
+        f"  • Interactive prompts accept {FORGE_FLEXIBLE_INPUT_SUMMARY}\n"
         "  • Use [yellow]--dry-run[/yellow] to preview before generating\n"
         "  • Use [yellow]--save-memory[/yellow] for non-interactive runs that should remember project conventions\n"
         "  • Use [yellow]--show-memory[/yellow] to inspect what copilot remembers for this project\n"
