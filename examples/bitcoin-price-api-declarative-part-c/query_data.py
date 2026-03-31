@@ -2,7 +2,7 @@
 """Query the enhanced table to show all features working"""
 from google.cloud import bigquery
 
-client = bigquery.Client(project='<<YOUR_PROJECT_HERE>>')
+client = bigquery.Client(project="<<YOUR_PROJECT_HERE>>")
 
 print("=" * 80)
 print("PART C: ENHANCED DATA QUERY")
@@ -30,7 +30,7 @@ print()
 results = client.query(query).result()
 
 for row in results:
-    print(f"📊 Record:")
+    print("📊 Record:")
     print(f"   ID: {row.price_id}")
     print(f"   Price: ${row.price_usd:,.2f}")
     print(f"   Change: {row.price_change_24h_percent}%")

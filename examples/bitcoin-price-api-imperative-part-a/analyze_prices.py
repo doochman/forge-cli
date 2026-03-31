@@ -4,8 +4,9 @@ Bitcoin Price Analytics
 Query and analyze the Bitcoin price data.
 """
 
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 # Load data
 data_file = Path("runtime/bitcoin_prices.csv")
@@ -16,8 +17,8 @@ if not data_file.exists():
 
 # Read CSV
 df = pd.read_csv(data_file)
-df['ingestion_timestamp'] = pd.to_datetime(df['ingestion_timestamp'])
-df['price_timestamp'] = pd.to_datetime(df['price_timestamp'])
+df["ingestion_timestamp"] = pd.to_datetime(df["ingestion_timestamp"])
+df["price_timestamp"] = pd.to_datetime(df["price_timestamp"])
 
 print("=" * 70)
 print("📊 BITCOIN PRICE ANALYTICS")
@@ -61,7 +62,9 @@ if len(df) > 1:
 # Recent data
 print("📝 RECENT RECORDS (Last 5)")
 print("-" * 70)
-recent = df.tail(5)[['ingestion_timestamp', 'price_usd', 'price_change_24h_percent', 'volume_24h_usd']]
+recent = df.tail(5)[
+    ["ingestion_timestamp", "price_usd", "price_change_24h_percent", "volume_24h_usd"]
+]
 print(recent.to_string(index=False))
 print()
 

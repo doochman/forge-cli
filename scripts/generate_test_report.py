@@ -10,10 +10,11 @@ Usage:
 """
 
 import json
-import sys
 import os
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
 import yaml
 
 
@@ -29,7 +30,7 @@ def load_coverage():
     coverage_path = Path(__file__).parent.parent / "coverage.json"
     if not coverage_path.exists():
         return {"totals": {"percent_covered": 0}}
-    
+
     with open(coverage_path) as f:
         return json.load(f)
 
@@ -39,7 +40,7 @@ def load_test_results():
     results_path = Path(__file__).parent.parent / "test-results.json"
     if not results_path.exists():
         return {"tests": []}
-    
+
     with open(results_path) as f:
         return json.load(f)
 
@@ -47,10 +48,10 @@ def load_test_results():
 def analyze_provider_coverage(coverage_data):
     """Analyze coverage per provider"""
     providers = {}
-    
+
     # Get coverage by file pattern
     files = coverage_data.get("files", {})
-    
+
     for filepath, file_cov in files.items():
         # Extract provider from path like "providers/gcp/..."
         if "/providers/" in filepath:
@@ -58,17 +59,13 @@ def analyze_provider_coverage(coverage_data):
             if len(parts) > 1:
                 provider = parts[1].split("/")[0]
                 if provider not in providers:
-                    providers[provider] = {
-                        "lines_covered": 0,
-                        "lines_total": 0,
-                        "files": []
-                    }
-                
+                    providers[provider] = {"lines_covered": 0, "lines_total": 0, "files": []}
+
                 summary = file_cov.get("summary", {})
                 providers[provider]["lines_covered"] += summary.get("covered_lines", 0)
                 providers[provider]["lines_total"] += summary.get("num_statements", 0)
                 providers[provider]["files"].append(filepath)
-    
+
     # Calculate percentages
     for provider in providers:
         total = providers[provider]["lines_total"]
@@ -77,14 +74,14 @@ def analyze_provider_coverage(coverage_data):
             providers[provider]["coverage_pct"] = round((covered / total) * 100, 1)
         else:
             providers[provider]["coverage_pct"] = 0
-    
+
     return providers
 
 
 def analyze_command_tests(test_results):
     """Analyze tests by command"""
     commands = {}
-    
+
     for test in test_results.get("tests", []):
         # Extract command from test path like "test_validate.py::test_..."
         test_file = test.get("nodeid", "").split("::")[0]
@@ -92,7 +89,7 @@ def analyze_command_tests(test_results):
             cmd = test_file.replace("test_", "").replace(".py", "")
             if cmd not in commands:
                 commands[cmd] = {"passed": 0, "failed": 0, "skipped": 0}
-            
+
             outcome = test.get("outcome", "failed")
             if outcome == "passed":
                 commands[cmd]["passed"] += 1
@@ -100,29 +97,29 @@ def analyze_command_tests(test_results):
                 commands[cmd]["failed"] += 1
             elif outcome == "skipped":
                 commands[cmd]["skipped"] += 1
-    
+
     return commands
 
 
 def generate_report(profile="alpha"):
     """Generate the test report"""
-    
+
     manifest = load_manifest()
     coverage = load_coverage()
     test_results = load_test_results()
-    
+
     build = manifest["builds"].get(profile, {})
-    
+
     # Analyze data
     provider_cov = analyze_provider_coverage(coverage)
     command_tests = analyze_command_tests(test_results)
-    
+
     # Overall stats
     overall_cov = coverage.get("totals", {}).get("percent_covered", 0)
     total_tests = len(test_results.get("tests", []))
     passed = sum(1 for t in test_results.get("tests", []) if t.get("outcome") == "passed")
     failed = sum(1 for t in test_results.get("tests", []) if t.get("outcome") == "failed")
-    
+
     # Generate markdown report
     report = f"""# Build Test Report - {profile.upper()}
 
@@ -148,12 +145,12 @@ def generate_report(profile="alpha"):
 | Provider | Coverage | Files | Test Status | Risk |
 |----------|----------|-------|-------------|------|
 """
-    
+
     for provider in build.get("providers", []):
         cov_data = provider_cov.get(provider, {})
         cov_pct = cov_data.get("coverage_pct", 0)
         file_count = len(cov_data.get("files", []))
-        
+
         # Risk assessment
         if cov_pct >= 80:
             risk = "🟢 Low"
@@ -163,9 +160,9 @@ def generate_report(profile="alpha"):
             risk = "🟠 High"
         else:
             risk = "🔴 Very High"
-        
+
         report += f"| {provider} | {cov_pct:.1f}% | {file_count} | {'✅' if cov_pct > 0 else '❌'} | {risk} |\n"
-    
+
     report += """
 ---
 
@@ -174,13 +171,13 @@ def generate_report(profile="alpha"):
 | Command | Tests | Passed | Failed | Coverage |
 |---------|-------|--------|--------|----------|
 """
-    
+
     for cmd in build.get("commands", []):
         test_data = command_tests.get(cmd, {"passed": 0, "failed": 0, "skipped": 0})
         total_cmd_tests = test_data["passed"] + test_data["failed"] + test_data["skipped"]
-        
+
         report += f"| {cmd} | {total_cmd_tests} | {test_data['passed']} | {test_data['failed']} | {'✅' if test_data['failed'] == 0 else '❌'} |\n"
-    
+
     report += """
 ---
 
@@ -188,22 +185,23 @@ def generate_report(profile="alpha"):
 
 ### What You're Shipping:
 """
-    
+
     # Count components
     num_providers = len(build.get("providers", []))
     num_commands = len(build.get("commands", []))
-    
+
     report += f"""
 - **{num_providers} providers**: {", ".join(build.get("providers", []))}
 - **{num_commands} commands**: {", ".join(build.get("commands", []))}
 
 ### Coverage Analysis:
 """
-    
+
     # Provider risk
-    high_risk_providers = [p for p in build.get("providers", []) 
-                          if provider_cov.get(p, {}).get("coverage_pct", 0) < 50]
-    
+    high_risk_providers = [
+        p for p in build.get("providers", []) if provider_cov.get(p, {}).get("coverage_pct", 0) < 50
+    ]
+
     if high_risk_providers:
         report += f"""
 ⚠️ **High-risk providers** (coverage < 50%): {", ".join(high_risk_providers)}
@@ -212,7 +210,7 @@ def generate_report(profile="alpha"):
         report += """
 ✅ All providers have acceptable coverage (≥50%)
 """
-    
+
     # Test failures
     if failed > 0:
         report += f"""
@@ -222,13 +220,13 @@ def generate_report(profile="alpha"):
         report += """
 ✅ All tests passing
 """
-    
+
     # Overall recommendation
     report += """
 
 ### Recommendation:
 """
-    
+
     if failed > 0:
         report += """
 **DO NOT SHIP** - Fix failing tests first
@@ -245,14 +243,14 @@ def generate_report(profile="alpha"):
         report += f"""
 **LOW RISK** - Coverage at {overall_cov:.1f}%. {profile.upper()} build is well tested.
 """
-    
+
     if high_risk_providers and profile == "stable":
         report += f"""
 
 ⚠️ **Warning**: Stable build includes high-risk providers: {", ".join(high_risk_providers)}  
 Consider moving these to beta or improving their test coverage.
 """
-    
+
     report += """
 
 ---
@@ -269,7 +267,7 @@ Consider moving these to beta or improving their test coverage.
 *This report is for decision-making only. It doesn't control what gets packaged.*  
 *Edit build-manifest.yaml to control what goes in each build.*
 """
-    
+
     return report
 
 
@@ -278,17 +276,17 @@ def main():
     profile = "alpha"
     if len(sys.argv) > 1 and sys.argv[1] in ["alpha", "beta", "stable"]:
         profile = sys.argv[1]
-    
+
     report = generate_report(profile)
-    
+
     # Write report
     output_path = Path(__file__).parent.parent / "build-test-report.md"
     with open(output_path, "w") as f:
         f.write(report)
-    
+
     print(f"✅ Test report generated: {output_path}")
     print(f"📊 Profile: {profile}")
-    print(f"\nReview build-test-report.md to assess risk before shipping.")
+    print("\nReview build-test-report.md to assess risk before shipping.")
 
 
 if __name__ == "__main__":
