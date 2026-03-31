@@ -18,7 +18,7 @@ import argparse
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from fluid_build.cli.console import cprint
 from fluid_build.cli.console import error as console_error
@@ -186,52 +186,24 @@ def run(args, logger: logging.Logger) -> int:
             raise CLIError(1, "contract_load_failed", {"error": str(e)})
 
         # Determine target schema version
-        target_version = _determine_target_version(contract, args, schema_manager, logger)
+        target_version, auto_selected = _determine_target_version(contract, args, schema_manager, logger)
 
         # Validate version constraints
         _validate_version_constraints(target_version, args, logger)
 
+        # Perform validation, with one-step fallback for auto-selected latest versions
+        target_version, validation_result = _validate_with_version_fallback(
+            contract=contract,
+            target_version=target_version,
+            auto_selected=auto_selected,
+            args=args,
+            schema_manager=schema_manager,
+            logger=logger,
+        )
+
         # Show schema if requested
         if args.show_schema:
             _show_schema_info(target_version, schema_manager, args, logger)
-
-        # Perform validation
-        validation_result = schema_manager.validate_contract(
-            contract, schema_version=target_version, strict=args.strict, offline_only=args.offline
-        )
-
-        # NEW: FLUID 0.7.1 governance validation
-        if target_version and target_version >= SchemaVersion.parse("0.7.1"):
-            if not args.quiet and args.verbose:
-                info(logger, "Running FLUID 0.7.1 governance validation...")
-
-            # Sovereignty validation
-            sovereignty_valid, sovereignty_messages = validate_sovereignty(contract)
-            for msg in sovereignty_messages:
-                if "❌" in msg:
-                    validation_result.add_error(msg)
-                elif "⚠️" in msg:
-                    validation_result.add_warning(msg)
-                else:
-                    if args.verbose:
-                        info(logger, msg)
-
-            if not sovereignty_valid:
-                validation_result.is_valid = False
-
-            # AgentPolicy validation
-            agent_policy_valid, agent_messages = validate_agent_policy(contract)
-            for msg in agent_messages:
-                if "❌" in msg:
-                    validation_result.add_error(msg)
-                elif "⚠️" in msg:
-                    validation_result.add_warning(msg)
-                else:
-                    if args.verbose:
-                        info(logger, msg)
-
-            if not agent_policy_valid:
-                validation_result.is_valid = False
 
         # Log metrics
         duration = time.time() - start_time
@@ -333,13 +305,13 @@ def _handle_list_versions(schema_manager: FluidSchemaManager, args, logger: logg
 
 def _determine_target_version(
     contract: dict, args, schema_manager: FluidSchemaManager, logger: logging.Logger
-) -> Optional[SchemaVersion]:
+) -> Tuple[Optional[SchemaVersion], bool]:
     """Determine which schema version to validate against."""
 
     # Explicit version specified
     if args.schema_version:
         try:
-            return SchemaVersion.parse(args.schema_version)
+            return SchemaVersion.parse(args.schema_version), False
         except ValueError as e:
             raise CLIError(
                 1, "invalid_schema_version", {"version": args.schema_version, "error": str(e)}
@@ -350,23 +322,139 @@ def _determine_target_version(
     if detected:
         if args.verbose:
             info(logger, f"Detected FLUID version: {detected}")
-        return detected
+        return detected, False
 
-    # Fallback based on constraints
+    default_version = _find_latest_compatible_version(args, schema_manager)
+    warn(logger, f"No fluidVersion detected, defaulting to latest compatible version: {default_version}")
+    return default_version, True
+
+
+def _available_schema_versions(schema_manager: FluidSchemaManager, args) -> list[SchemaVersion]:
+    versions = schema_manager.list_available_versions(include_remote=not args.offline)
+    return [SchemaVersion.parse(version) for version in versions]
+
+
+def _filter_compatible_versions(versions: list[SchemaVersion], args) -> list[SchemaVersion]:
+    compatible = versions
+
     if args.min_version:
         try:
-            constraint = VersionConstraint.parse(args.min_version)
-            compatible = schema_manager.find_compatible_version(constraint)
-            if compatible:
-                warn(logger, f"No fluidVersion in contract, using compatible version: {compatible}")
-                return compatible
+            min_constraint = VersionConstraint.parse(args.min_version)
         except ValueError as e:
             raise CLIError(1, "invalid_min_version", {"version": args.min_version, "error": str(e)})
+        compatible = [version for version in compatible if min_constraint.matches(version)]
 
-    # Default fallback
-    default_version = SchemaVersion.parse("0.5.7")
-    warn(logger, f"No fluidVersion detected, defaulting to: {default_version}")
-    return default_version
+    if args.max_version:
+        try:
+            max_constraint = VersionConstraint.parse(args.max_version)
+        except ValueError as e:
+            raise CLIError(1, "invalid_max_version", {"version": args.max_version, "error": str(e)})
+        compatible = [version for version in compatible if max_constraint.matches(version)]
+
+    return compatible
+
+
+def _find_latest_compatible_version(args, schema_manager: FluidSchemaManager) -> SchemaVersion:
+    versions = _available_schema_versions(schema_manager, args)
+    compatible_versions = _filter_compatible_versions(versions, args)
+    if compatible_versions:
+        return compatible_versions[-1]
+
+    if versions:
+        return versions[-1]
+
+    return SchemaVersion.parse("0.5.7")
+
+
+def _find_previous_compatible_version(
+    current_version: SchemaVersion, args, schema_manager: FluidSchemaManager
+) -> Optional[SchemaVersion]:
+    versions = _available_schema_versions(schema_manager, args)
+    compatible_versions = _filter_compatible_versions(versions, args)
+    previous_versions = [version for version in compatible_versions if version < current_version]
+    return previous_versions[-1] if previous_versions else None
+
+
+def _validate_contract_for_version(
+    contract: dict,
+    target_version: Optional[SchemaVersion],
+    args,
+    schema_manager: FluidSchemaManager,
+    logger: logging.Logger,
+) -> ValidationResult:
+    validation_result = schema_manager.validate_contract(
+        contract, schema_version=target_version, strict=args.strict, offline_only=args.offline
+    )
+
+    # FLUID 0.7.1+ governance validation
+    if target_version and target_version >= SchemaVersion.parse("0.7.1"):
+        if not args.quiet and args.verbose:
+            info(logger, "Running FLUID 0.7.1 governance validation...")
+
+        sovereignty_valid, sovereignty_messages = validate_sovereignty(contract)
+        for msg in sovereignty_messages:
+            if "❌" in msg:
+                validation_result.add_error(msg)
+            elif "⚠️" in msg:
+                validation_result.add_warning(msg)
+            else:
+                if args.verbose:
+                    info(logger, msg)
+
+        if not sovereignty_valid:
+            validation_result.is_valid = False
+
+        agent_policy_valid, agent_messages = validate_agent_policy(contract)
+        for msg in agent_messages:
+            if "❌" in msg:
+                validation_result.add_error(msg)
+            elif "⚠️" in msg:
+                validation_result.add_warning(msg)
+            else:
+                if args.verbose:
+                    info(logger, msg)
+
+        if not agent_policy_valid:
+            validation_result.is_valid = False
+
+    return validation_result
+
+
+def _validate_with_version_fallback(
+    contract: dict,
+    target_version: Optional[SchemaVersion],
+    auto_selected: bool,
+    args,
+    schema_manager: FluidSchemaManager,
+    logger: logging.Logger,
+) -> Tuple[Optional[SchemaVersion], ValidationResult]:
+    validation_result = _validate_contract_for_version(
+        contract=contract,
+        target_version=target_version,
+        args=args,
+        schema_manager=schema_manager,
+        logger=logger,
+    )
+
+    if not auto_selected or validation_result.is_valid or not target_version:
+        return target_version, validation_result
+
+    previous_version = _find_previous_compatible_version(target_version, args, schema_manager)
+    if not previous_version:
+        return target_version, validation_result
+
+    warn(
+        logger,
+        f"Validation failed for auto-selected version {target_version}; retrying previous compatible version {previous_version}",
+    )
+    fallback_result = _validate_contract_for_version(
+        contract=contract,
+        target_version=previous_version,
+        args=args,
+        schema_manager=schema_manager,
+        logger=logger,
+    )
+    return previous_version, fallback_result
 
 
 def _validate_version_constraints(
