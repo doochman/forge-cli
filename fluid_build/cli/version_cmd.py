@@ -31,6 +31,7 @@ from typing import Any, Dict
 from fluid_build.cli.console import cprint
 
 from .. import __version__ as CLI_VERSION
+from ..schema_manager import FluidSchemaManager
 from ._common import CLIError
 from ._logging import info
 
@@ -45,19 +46,21 @@ except ImportError:
     RICH_AVAILABLE = False
 
 COMMAND = "version"
+FALLBACK_SPEC_VERSION = "0.5.7"
 
 
 def register(subparsers: argparse._SubParsersAction):
     """Register unified version command"""
+    supported_versions = ", ".join(FluidSchemaManager.BUNDLED_VERSIONS)
     p = subparsers.add_parser(
         COMMAND,
         help="Show version and system information",
-        description="""
+        description=f"""
 Display FLUID CLI version and system information.
 
 Shows:
 • CLI version and build info
-• Supported FLUID spec versions (0.5.7, 0.7.1)
+• Supported FLUID spec versions ({supported_versions})
 • Available features and capabilities
 • Provider availability
 • System/Python environment (with --verbose)
@@ -96,9 +99,16 @@ def run(args, logger: logging.Logger) -> int:
 
 def _gather_version_info(args) -> Dict[str, Any]:
     """Gather comprehensive version information"""
+    supported_versions = FluidSchemaManager.BUNDLED_VERSIONS
+    latest_version = supported_versions[-1] if supported_versions else FALLBACK_SPEC_VERSION
+    default_version = latest_version
     version_info = {
         "cli": {"version": CLI_VERSION, "api_version": "v1", "build": "production"},
-        "spec_versions": {"supported": ["0.5.7", "0.7.1"], "default": "0.5.7", "latest": "0.7.1"},
+        "spec_versions": {
+            "supported": supported_versions,
+            "default": default_version,
+            "latest": latest_version,
+        },
         "features": _detect_features(),
         "providers": _detect_providers(),
     }
@@ -126,7 +136,7 @@ def _detect_features() -> Dict[str, bool]:
         "legacy_057": True,  # Always available
     }
 
-    # Check 0.7.1 features
+    # Check 0.7.1+ features
     try:
         from fluid_build.forge.core.provider_actions import ProviderActionParser
 
@@ -224,7 +234,7 @@ API: {cli_info["api_version"]}
         feature_names = {
             "core_validation": "Core Validation",
             "legacy_057": "FLUID 0.5.7 Support",
-            "0.7.1_support": "FLUID 0.7.1 Support",
+            "0.7.1_support": "FLUID 0.7.1+ Support",
             "provider_actions": "Provider Actions",
             "sovereignty": "Sovereignty Constraints",
             "agent_policy": "Agent Policy",
