@@ -156,7 +156,9 @@ def _make_provider(args) -> DataMeshManagerProvider:
 def _cmd_publish(args, logger=None):
     """Execute publish command."""
     try:
-        contract = load_contract_with_overlay(args.contract, getattr(args, "overlay", None), logger or logging.getLogger(__name__))
+        contract = load_contract_with_overlay(
+            args.contract, getattr(args, "overlay", None), logger or logging.getLogger(__name__)
+        )
         provider = _make_provider(args)
 
         result = provider.apply(

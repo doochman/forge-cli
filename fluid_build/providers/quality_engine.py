@@ -216,6 +216,7 @@ def execute_quality_checks(
             explicit_vv = rule.get("validValues", [])
             if not explicit_vv and description and " valid values:" in description.lower():
                 import re as _re
+
                 m = _re.search(r"valid values:\s*([^.]+)", description, _re.IGNORECASE)
                 if m:
                     explicit_vv = [v.strip() for v in m.group(1).split(",") if v.strip()]
@@ -600,7 +601,9 @@ def _check_anomaly_detection(
         sql = f"SELECT COUNT(*) AS row_count FROM {table_ref}"
         rows = execute_fn(sql)
         row_count = rows[0][0] if rows and rows[0][0] is not None else 0
-        passed = _compare(row_count, threshold, operator) if threshold is not None else row_count > 0
+        passed = (
+            _compare(row_count, threshold, operator) if threshold is not None else row_count > 0
+        )
         return QualityCheckResult(
             rule_id=rule_id,
             rule_type="anomaly_detection",

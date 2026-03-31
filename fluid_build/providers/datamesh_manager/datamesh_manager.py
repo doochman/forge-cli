@@ -678,9 +678,7 @@ class DataMeshManagerProvider(BaseProvider):
         return ports
 
     @staticmethod
-    def _build_server_object(
-        section: Mapping[str, Any], provider: str
-    ) -> Dict[str, Any]:
+    def _build_server_object(section: Mapping[str, Any], provider: str) -> Dict[str, Any]:
         """Build a structured ``server`` object for an output port.
 
         The DPS schema expects keys like ``account``, ``database``,
@@ -995,7 +993,9 @@ class DataMeshManagerProvider(BaseProvider):
         resp = self._request("PUT", f"/api/datacontracts/{contract_id}", json_body=dc)
         self._log.info(
             "Published data contract %s (format=%s, HTTP %s)",
-            contract_id, fmt, resp.status_code,
+            contract_id,
+            fmt,
+            resp.status_code,
         )
         return {
             "contract_id": contract_id,
@@ -1036,9 +1036,7 @@ class DataMeshManagerProvider(BaseProvider):
             "id": contract_id,
             "name": meta.get("name") or fluid.get("name") or product_id,
             "version": meta.get("version", "1.0.0"),
-            "status": _STATUS_MAP.get(
-                str(meta.get("status", "active")).lower(), "active"
-            ),
+            "status": _STATUS_MAP.get(str(meta.get("status", "active")).lower(), "active"),
             "dataProduct": product_id,
             "team": {
                 "name": self._derive_team_id(fluid),
@@ -1072,11 +1070,7 @@ class DataMeshManagerProvider(BaseProvider):
             fields_in = (
                 raw_schema
                 if isinstance(raw_schema, list)
-                else (
-                    raw_schema.get("fields", [])
-                    if isinstance(raw_schema, dict)
-                    else []
-                )
+                else (raw_schema.get("fields", []) if isinstance(raw_schema, dict) else [])
             )
 
             properties: List[Dict[str, Any]] = []
@@ -1085,9 +1079,7 @@ class DataMeshManagerProvider(BaseProvider):
                     continue
                 prop: Dict[str, Any] = {
                     "name": f.get("name", f.get("id", "unnamed")),
-                    "logicalType": self._odcs_logical_type(
-                        f.get("type", "string")
-                    ),
+                    "logicalType": self._odcs_logical_type(f.get("type", "string")),
                 }
                 if f.get("description"):
                     prop["description"] = f["description"]
@@ -1113,9 +1105,7 @@ class DataMeshManagerProvider(BaseProvider):
             if isinstance(binding, dict) and binding:
                 srv: Dict[str, Any] = {}
                 if provider:
-                    srv["type"] = _PROVIDER_TYPE_MAP.get(
-                        provider.lower(), provider.title()
-                    ).lower()
+                    srv["type"] = _PROVIDER_TYPE_MAP.get(provider.lower(), provider.title()).lower()
                 location = binding.get("location", {})
                 if isinstance(location, dict):
                     for k, v in location.items():
@@ -1200,9 +1190,7 @@ class DataMeshManagerProvider(BaseProvider):
 
     # ---- DCS 0.9.3 (deprecated, removal after 2026-12-31) ----------------
 
-    def _build_data_contract_dcs(
-        self, fluid: Mapping[str, Any], product_id: str
-    ) -> Dict[str, Any]:
+    def _build_data_contract_dcs(self, fluid: Mapping[str, Any], product_id: str) -> Dict[str, Any]:
         """Build a Data Contract Specification 0.9.3 payload (deprecated).
 
         Kept for backward compatibility with older Entropy Data instances.
