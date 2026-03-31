@@ -145,7 +145,7 @@ class DataMeshManagerProvider(BaseProvider):
             actions.append(
                 {
                     "action": "PUT",
-                    "url": f"{self.api_url}/api/dataproducts/{dp['info']['id']}",
+                    "url": f"{self.api_url}/api/dataproducts/{dp['id']}",
                     "payload": dp,
                 }
             )
@@ -164,11 +164,14 @@ class DataMeshManagerProvider(BaseProvider):
             Auto-create the team if it doesn't exist (default True).
         publish_contract : bool
             Also publish a companion data contract (default False).
+        contract_format : str
+            ``"odcs"`` (default) or ``"dcs"`` for the companion data contract.
         """
         dry_run: bool = kw.get("dry_run", False)
         team_id: Optional[str] = kw.get("team_id")
         create_team: bool = kw.get("create_team", True)
         publish_contract_flag: bool = kw.get("publish_contract", False)
+        contract_format: str = kw.get("contract_format", self.CONTRACT_FORMAT_ODCS)
 
         self._require_api_key()
 
@@ -182,6 +185,7 @@ class DataMeshManagerProvider(BaseProvider):
                 team_id_override=team_id,
                 create_team=create_team,
                 publish_contract=publish_contract_flag,
+                contract_format=contract_format,
             )
             results.append(result)
 
@@ -225,15 +229,24 @@ class DataMeshManagerProvider(BaseProvider):
         return resp.json()
 
     def publish_data_contract(
-        self, fluid: Mapping[str, Any], product_id: Optional[str] = None
+        self,
+        fluid: Mapping[str, Any],
+        product_id: Optional[str] = None,
+        *,
+        fmt: str = "odcs",
     ) -> Dict[str, Any]:
         """Publish a FLUID contract as a data contract to Entropy Data.
 
         Public convenience method wrapping the internal helper.
+
+        Parameters
+        ----------
+        fmt : str
+            ``"odcs"`` (default) or ``"dcs"``.
         """
         self._require_api_key()
         pid = product_id or self._extract_id(fluid)
-        return self._publish_data_contract_internal(fluid, pid)
+        return self._publish_data_contract_internal(fluid, pid, fmt=fmt)
 
     def publish_test_results(
         self,
@@ -330,13 +343,20 @@ class DataMeshManagerProvider(BaseProvider):
         team_id_override: Optional[str] = None,
         create_team: bool = True,
         publish_contract: bool = False,
+        contract_format: str = "odcs",
     ) -> Dict[str, Any]:
         dp = self._to_data_product(fluid)
-        product_id = dp["info"]["id"]
+        product_id = dp["id"]
 
         # Resolve team
         tid = team_id_override or self._derive_team_id(fluid)
         dp["teamId"] = tid
+
+        # Wire dataContractId on output ports when publishing companion contract
+        if publish_contract:
+            contract_id = f"{product_id}-contract"
+            for port in dp.get("outputPorts", []):
+                port["dataContractId"] = contract_id
 
         if dry_run:
             result: Dict[str, Any] = {
@@ -363,7 +383,7 @@ class DataMeshManagerProvider(BaseProvider):
             "product_id": product_id,
             "team_id": tid,
             "status_code": resp.status_code,
-            "url": f"https://app.entropy-data.com/dataproducts/{product_id}",
+            "url": f"{self.api_url}/dataproducts/{product_id}",
         }
 
         # Publish one ODCS data contract per expose, linked via dataContractId
@@ -478,7 +498,14 @@ class DataMeshManagerProvider(BaseProvider):
     def _to_data_product(self, fluid: Mapping[str, Any]) -> Dict[str, Any]:
         """Map a FLUID contract to the Entropy Data *DataProduct* shape.
 
+        Conforms to Data Product Specification v0.0.1.
         Reference: ``PUT /api/dataproducts/{id}``
+
+        Schema requires:
+        - ``id`` at root level
+        - ``info.title`` (not ``info.name``)
+        - ``info.owner`` (team id)
+        - ``dataProductSpecification: "0.0.1"`` at root
         """
         meta = fluid.get("metadata", {})
         owner = fluid.get("owner", meta.get("owner", {}))
@@ -487,21 +514,34 @@ class DataMeshManagerProvider(BaseProvider):
         status = _STATUS_MAP.get(str(meta.get("status", "draft")).lower(), "draft")
 
         info: Dict[str, Any] = {
-            "id": product_id,
-            "name": meta.get("name") or fluid.get("name") or product_id,
+            "title": meta.get("name") or fluid.get("name") or product_id,
+            "owner": self._derive_team_id(fluid),
             "description": meta.get("description") or fluid.get("description", ""),
             "status": status,
         }
 
         # Optional info-level fields
-        if owner:
-            info["owner"] = self._derive_team_id(fluid)
         if meta.get("archetype"):
             info["archetype"] = meta["archetype"]
+        elif fluid.get("kind"):
+            kind_lower = str(fluid["kind"]).lower()
+            if kind_lower == "dataproduct":
+                # Infer from domain layer if possible
+                layer = str(meta.get("layer", "")).lower()
+                if layer in ("bronze", "raw"):
+                    info["archetype"] = "source-aligned"
+                elif layer in ("gold", "aggregate"):
+                    info["archetype"] = "aggregate"
+                elif layer in ("silver", "curated"):
+                    info["archetype"] = "consumer-aligned"
         if meta.get("maturity"):
             info["maturity"] = meta["maturity"]
 
-        dp: Dict[str, Any] = {"info": info}
+        dp: Dict[str, Any] = {
+            "dataProductSpecification": "0.0.1",
+            "id": product_id,
+            "info": info,
+        }
 
         # Input ports (expects)
         input_ports = self._map_input_ports(fluid)
@@ -518,10 +558,18 @@ class DataMeshManagerProvider(BaseProvider):
         if links:
             dp["links"] = links
 
-        # Tags
-        tags = meta.get("tags", [])
-        if isinstance(tags, list) and tags:
-            dp["tags"] = tags
+        # Tags — merge top-level and metadata tags
+        all_tags: List[str] = []
+        top_tags = fluid.get("tags", [])
+        if isinstance(top_tags, list):
+            all_tags.extend(top_tags)
+        meta_tags = meta.get("tags", [])
+        if isinstance(meta_tags, list):
+            for t in meta_tags:
+                if t not in all_tags:
+                    all_tags.append(t)
+        if all_tags:
+            dp["tags"] = all_tags
 
         # Custom fields  (domain, environment, version, etc.)
         custom = self._extract_custom(fluid)
@@ -590,10 +638,11 @@ class DataMeshManagerProvider(BaseProvider):
             if provider:
                 port["type"] = _PROVIDER_TYPE_MAP.get(provider.lower(), provider.title())
 
-            # Location
-            location = self._resolve_location(expose, provider)
-            if location:
-                port["location"] = location
+            # Server object — the DPS schema expects a structured server block,
+            # not a flat location string.
+            server = self._build_server_object(expose, provider)
+            if server:
+                port["server"] = server
 
             # Links (schema, catalog, etc.)
             port_links = expose.get("links", {})
@@ -627,6 +676,124 @@ class DataMeshManagerProvider(BaseProvider):
 
             ports.append(port)
         return ports
+
+    @staticmethod
+    def _build_server_object(
+        section: Mapping[str, Any], provider: str
+    ) -> Dict[str, Any]:
+        """Build a structured ``server`` object for an output port.
+
+        The DPS schema expects keys like ``account``, ``database``,
+        ``schema``, ``table``, ``topic``, ``location`` etc. inside a
+        server object — NOT a flat location string.
+        """
+        server: Dict[str, Any] = {}
+        provider_lower = provider.lower() if provider else ""
+
+        # ---- FLUID 0.7.1: binding.location ----
+        binding = section.get("binding", {})
+        if isinstance(binding, dict):
+            loc = binding.get("location", {})
+            if isinstance(loc, dict) and loc:
+                if provider_lower in ("gcp", "bigquery"):
+                    if loc.get("project"):
+                        server["account"] = str(loc["project"])
+                    if loc.get("dataset"):
+                        server["database"] = str(loc["dataset"])
+                    if loc.get("table"):
+                        server["table"] = str(loc["table"])
+                    return server
+
+                if provider_lower == "snowflake":
+                    for key in ("account", "database", "schema", "table"):
+                        if loc.get(key):
+                            server[key] = str(loc[key])
+                    return server
+
+                if provider_lower in ("aws", "s3"):
+                    bucket = loc.get("bucket", "")
+                    path_val = loc.get("path", loc.get("prefix", loc.get("key", "")))
+                    if bucket:
+                        loc_str = f"s3://{bucket}"
+                        if path_val:
+                            loc_str += "/{}".format(str(path_val).strip("/"))
+                        server["location"] = loc_str
+                    fmt = binding.get("format")
+                    if fmt:
+                        server["format"] = str(fmt)
+                    return server
+
+                if provider_lower == "redshift":
+                    for key in ("database", "schema", "table"):
+                        if loc.get(key):
+                            server[key] = str(loc[key])
+                    return server
+
+                if provider_lower == "kafka":
+                    if loc.get("topic"):
+                        server["topic"] = str(loc["topic"])
+                    return server
+
+                # Generic: copy all location fields (skip template vars)
+                for k, v in loc.items():
+                    if v and not str(v).startswith("{{") and k != "region":
+                        server[k] = v
+                return server
+
+        # ---- Legacy: flat provider keys ----
+        cfg: Mapping[str, Any] = {}
+        if provider_lower in ("gcp", "bigquery"):
+            cfg = section.get("gcp", section.get("bigquery", {}))
+            if isinstance(cfg, dict):
+                if cfg.get("project"):
+                    server["account"] = str(cfg["project"])
+                if cfg.get("dataset"):
+                    server["database"] = str(cfg["dataset"])
+                if cfg.get("table"):
+                    server["table"] = str(cfg["table"])
+
+        elif provider_lower == "snowflake":
+            cfg = section.get("snowflake", {})
+            if isinstance(cfg, dict):
+                for key in ("account", "database", "schema", "table"):
+                    if cfg.get(key):
+                        server[key] = str(cfg[key])
+
+        elif provider_lower in ("aws", "s3"):
+            cfg = section.get("aws", section.get("s3", {}))
+            if isinstance(cfg, dict):
+                bucket = cfg.get("bucket", "")
+                prefix = cfg.get("prefix", cfg.get("key", ""))
+                if bucket:
+                    loc_str = f"s3://{bucket}"
+                    if prefix:
+                        loc_str += f"/{prefix}"
+                    server["location"] = loc_str
+
+        elif provider_lower == "redshift":
+            cfg = section.get("redshift", {})
+            if isinstance(cfg, dict):
+                for key in ("database", "schema", "table"):
+                    if cfg.get(key):
+                        server[key] = str(cfg[key])
+
+        elif provider_lower == "kafka":
+            cfg = section.get("kafka", {})
+            if isinstance(cfg, dict):
+                if cfg.get("topic"):
+                    server["topic"] = str(cfg["topic"])
+
+        # Fallback: location/connection string
+        if not server:
+            conn = section.get("location") or section.get("connection", "")
+            if isinstance(conn, dict):
+                uri = conn.get("uri", conn.get("endpoint", ""))
+                if uri:
+                    server["location"] = str(uri)
+            elif conn:
+                server["location"] = str(conn)
+
+        return server
 
     # ---- location helpers -------------------------------------------------
 
@@ -795,14 +962,250 @@ class DataMeshManagerProvider(BaseProvider):
 
     # ---- data contracts ---------------------------------------------------
 
+    # Supported data contract output formats.
+    CONTRACT_FORMAT_ODCS = "odcs"
+    CONTRACT_FORMAT_DCS = "dcs"
+
     def _publish_data_contract_internal(
-        self, fluid: Mapping[str, Any], product_id: str
+        self,
+        fluid: Mapping[str, Any],
+        product_id: str,
+        *,
+        fmt: str = "odcs",
     ) -> Dict[str, Any]:
         """Publish a companion data contract to ``PUT /api/datacontracts/{id}``.
 
-        Maps FLUID contract fields to Data Contract Specification 0.9.3,
-        including models, quality/DQ rules, server definitions from bindings,
-        and build metadata.
+        Parameters
+        ----------
+        fluid : Mapping
+            The parsed FLUID contract.
+        product_id : str
+            The parent data product id.
+        fmt : str
+            ``"odcs"`` (default) — Open Data Contract Standard v3.1.0.
+            ``"dcs"``  — Data Contract Specification 0.9.3 (deprecated,
+            removal after 2026-12-31).
+        """
+        if fmt == self.CONTRACT_FORMAT_DCS:
+            dc = self._build_data_contract_dcs(fluid, product_id)
+        else:
+            dc = self._build_data_contract_odcs(fluid, product_id)
+
+        contract_id = dc["id"]
+        resp = self._request("PUT", f"/api/datacontracts/{contract_id}", json_body=dc)
+        self._log.info(
+            "Published data contract %s (format=%s, HTTP %s)",
+            contract_id, fmt, resp.status_code,
+        )
+        return {
+            "contract_id": contract_id,
+            "format": fmt,
+            "status_code": resp.status_code,
+            "url": f"{self.api_url}/datacontracts/{contract_id}",
+        }
+
+    # ---- ODCS v3.1.0 (primary / recommended) ----------------------------
+
+    def _build_data_contract_odcs(
+        self, fluid: Mapping[str, Any], product_id: str
+    ) -> Dict[str, Any]:
+        """Build an Open Data Contract Standard v3.1.0 payload.
+
+        Reference: https://bitol-io.github.io/open-data-contract-standard/
+        API example format::
+
+            {
+              "apiVersion": "v3.1.0",
+              "kind": "DataContract",
+              "id": "...",
+              "name": "...",
+              "version": "1.0.0",
+              "domain": "...",
+              "status": "active",
+              "description": { "purpose": "..." },
+              "schema": [ { "name": "...", "physicalType": "table", "properties": [...] } ],
+              "team": { "name": "team-id" }
+            }
+        """
+        meta = fluid.get("metadata", {})
+        contract_id = f"{product_id}-contract"
+
+        dc: Dict[str, Any] = {
+            "apiVersion": "v3.1.0",
+            "kind": "DataContract",
+            "id": contract_id,
+            "name": meta.get("name") or fluid.get("name") or product_id,
+            "version": meta.get("version", "1.0.0"),
+            "status": _STATUS_MAP.get(
+                str(meta.get("status", "active")).lower(), "active"
+            ),
+            "dataProduct": product_id,
+            "team": {
+                "name": self._derive_team_id(fluid),
+            },
+        }
+
+        # Domain
+        domain = fluid.get("domain") or meta.get("domain")
+        if domain:
+            dc["domain"] = str(domain).lower().replace(" ", "-")
+
+        # Description — ODCS uses { purpose, usage, limitations }
+        desc_text = meta.get("description") or fluid.get("description", "")
+        if desc_text:
+            dc["description"] = {"purpose": str(desc_text).strip()}
+
+        # Schema — ODCS uses a top-level array of schema objects
+        schema_array: List[Dict[str, Any]] = []
+        servers: List[Dict[str, Any]] = []
+
+        for expose in fluid.get("exposes", []):
+            model_id = expose.get("id", expose.get("exposeId", "default"))
+
+            # Extract field definitions
+            raw_schema = expose.get("schema", {})
+            if not raw_schema:
+                contract_block = expose.get("contract", {})
+                if isinstance(contract_block, dict):
+                    raw_schema = contract_block.get("schema", {})
+
+            fields_in = (
+                raw_schema
+                if isinstance(raw_schema, list)
+                else (
+                    raw_schema.get("fields", [])
+                    if isinstance(raw_schema, dict)
+                    else []
+                )
+            )
+
+            properties: List[Dict[str, Any]] = []
+            for f in fields_in:
+                if not isinstance(f, dict):
+                    continue
+                prop: Dict[str, Any] = {
+                    "name": f.get("name", f.get("id", "unnamed")),
+                    "logicalType": self._odcs_logical_type(
+                        f.get("type", "string")
+                    ),
+                }
+                if f.get("description"):
+                    prop["description"] = f["description"]
+                if f.get("required") is not None:
+                    prop["required"] = bool(f["required"])
+                if f.get("primaryKey") or f.get("primary_key"):
+                    prop["primaryKey"] = True
+                if f.get("sensitivity"):
+                    prop["classification"] = f["sensitivity"]
+                properties.append(prop)
+
+            if properties:
+                schema_entry: Dict[str, Any] = {
+                    "name": model_id,
+                    "physicalType": expose.get("kind", "table"),
+                    "properties": properties,
+                }
+                schema_array.append(schema_entry)
+
+            # Server definitions for ODCS
+            provider = self._extract_provider(expose)
+            binding = expose.get("binding", {})
+            if isinstance(binding, dict) and binding:
+                srv: Dict[str, Any] = {}
+                if provider:
+                    srv["type"] = _PROVIDER_TYPE_MAP.get(
+                        provider.lower(), provider.title()
+                    ).lower()
+                location = binding.get("location", {})
+                if isinstance(location, dict):
+                    for k, v in location.items():
+                        if v and not str(v).startswith("{{"):
+                            srv[k] = v
+                fmt_val = binding.get("format")
+                if fmt_val:
+                    srv["format"] = str(fmt_val)
+                if srv:
+                    servers.append(srv)
+
+        if schema_array:
+            dc["schema"] = schema_array
+        if servers:
+            dc["servers"] = servers
+
+        # Service-level objectives (quality)
+        sla = fluid.get("sla", meta.get("sla", {}))
+        if isinstance(sla, dict) and sla:
+            slo: Dict[str, Any] = {}
+            if "freshness" in sla:
+                slo["freshness"] = sla["freshness"]
+            if "availability" in sla:
+                slo["availability"] = sla["availability"]
+            if "completeness" in sla:
+                slo["completeness"] = sla["completeness"]
+            if slo:
+                dc["serviceLevelObjectives"] = slo
+
+        # Tags
+        tags = fluid.get("tags", [])
+        if isinstance(tags, list) and tags:
+            dc["tags"] = tags
+
+        # Custom properties — ODCS uses a list of {property, value} dicts
+        custom_props: List[Dict[str, Any]] = []
+        labels = fluid.get("labels", {})
+        if isinstance(labels, dict):
+            for k, v in labels.items():
+                custom_props.append({"property": k, "value": v})
+        builds = fluid.get("builds", {})
+        if isinstance(builds, (dict, list)) and builds:
+            custom_props.append({"property": "builds", "value": builds})
+        if custom_props:
+            dc["customProperties"] = custom_props
+
+        return dc
+
+    @staticmethod
+    def _odcs_logical_type(fluid_type: str) -> str:
+        """Map FLUID/SQL types to ODCS logical types."""
+        t = fluid_type.strip().lower()
+        mapping = {
+            "string": "string",
+            "varchar": "string",
+            "text": "string",
+            "char": "string",
+            "integer": "integer",
+            "int": "integer",
+            "int64": "integer",
+            "bigint": "integer",
+            "smallint": "integer",
+            "float": "number",
+            "float64": "number",
+            "double": "number",
+            "decimal": "number",
+            "numeric": "number",
+            "boolean": "boolean",
+            "bool": "boolean",
+            "date": "date",
+            "datetime": "timestamp",
+            "timestamp": "timestamp",
+            "timestamp_ntz": "timestamp",
+            "time": "string",
+            "json": "object",
+            "struct": "object",
+            "array": "array",
+            "binary": "binary",
+            "bytes": "binary",
+        }
+        return mapping.get(t, "string")
+
+    # ---- DCS 0.9.3 (deprecated, removal after 2026-12-31) ----------------
+
+    def _build_data_contract_dcs(
+        self, fluid: Mapping[str, Any], product_id: str
+    ) -> Dict[str, Any]:
+        """Build a Data Contract Specification 0.9.3 payload (deprecated).
+
+        Kept for backward compatibility with older Entropy Data instances.
         """
         meta = fluid.get("metadata", {})
         contract_id = f"{product_id}-contract"
@@ -877,9 +1280,9 @@ class DataMeshManagerProvider(BaseProvider):
                         if v and not str(v).startswith("{{"):
                             server_entry[k] = v
 
-                fmt = binding.get("format")
-                if fmt:
-                    server_entry["format"] = str(fmt)
+                fmt_val = binding.get("format")
+                if fmt_val:
+                    server_entry["format"] = str(fmt_val)
 
                 if server_entry:
                     servers[model_id] = server_entry
@@ -943,13 +1346,7 @@ class DataMeshManagerProvider(BaseProvider):
             if isinstance(labels, dict) and labels:
                 dc["custom"]["labels"] = labels
 
-        resp = self._request("PUT", f"/api/datacontracts/{contract_id}", json_body=dc)
-        self._log.info("Published data contract %s (%s)", contract_id, resp.status_code)
-        return {
-            "contract_id": contract_id,
-            "status_code": resp.status_code,
-            "url": f"https://app.entropy-data.com/datacontracts/{contract_id}",
-        }
+        return dc
 
     # ---- team management --------------------------------------------------
 

@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 
 from fluid_build.cli.console import cprint, success
 from fluid_build.cli.console import error as console_error
@@ -73,6 +74,15 @@ def add_parser(subparsers):
         "--no-create-team",
         action="store_true",
         help="Don't auto-create team if missing",
+    )
+    pub.add_argument(
+        "--contract-format",
+        choices=["odcs", "dcs"],
+        default="odcs",
+        help=(
+            "Data contract format: 'odcs' (Open Data Contract Standard v3.1.0, "
+            "default) or 'dcs' (Data Contract Specification 0.9.3, deprecated)"
+        ),
     )
     pub.add_argument(
         "--api-key",
@@ -143,10 +153,10 @@ def _make_provider(args) -> DataMeshManagerProvider:
     return DataMeshManagerProvider(**kwargs)
 
 
-def _cmd_publish(args):
+def _cmd_publish(args, logger=None):
     """Execute publish command."""
     try:
-        contract = load_contract_with_overlay(args.contract, getattr(args, "overlay", None))
+        contract = load_contract_with_overlay(args.contract, getattr(args, "overlay", None), logger or logging.getLogger(__name__))
         provider = _make_provider(args)
 
         result = provider.apply(
@@ -155,6 +165,7 @@ def _cmd_publish(args):
             team_id=getattr(args, "team_id", None),
             create_team=not getattr(args, "no_create_team", False),
             publish_contract=getattr(args, "with_contract", False),
+            contract_format=getattr(args, "contract_format", "odcs"),
         )
 
         if args.dry_run:
@@ -171,7 +182,7 @@ def _cmd_publish(args):
         return 1
 
 
-def _cmd_list(args):
+def _cmd_list(args, logger=None):
     """List all data products."""
     try:
         provider = _make_provider(args)
@@ -209,7 +220,7 @@ def _cmd_list(args):
         return 1
 
 
-def _cmd_get(args):
+def _cmd_get(args, logger=None):
     """Get a single data product."""
     try:
         provider = _make_provider(args)
@@ -221,7 +232,7 @@ def _cmd_get(args):
         return 1
 
 
-def _cmd_delete(args):
+def _cmd_delete(args, logger=None):
     """Delete a data product."""
     try:
         if not getattr(args, "yes", False):
@@ -243,7 +254,7 @@ def _cmd_delete(args):
         return 1
 
 
-def _cmd_teams(args):
+def _cmd_teams(args, logger=None):
     """List teams."""
     try:
         provider = _make_provider(args)

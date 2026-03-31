@@ -464,6 +464,14 @@ class ContractValidator:
 
     def _validate_single_expose(self, expose: Dict[str, Any], idx: int) -> None:
         """Validate a single exposed data product."""
+        # Support FLUID DSL aliases: exposeId -> id, kind -> type, contract.schema -> schema
+        if "id" not in expose and "exposeId" in expose:
+            expose = dict(expose, id=expose["exposeId"])
+        if "type" not in expose and "kind" in expose:
+            expose = dict(expose, type=expose["kind"])
+        if "schema" not in expose and "contract" in expose and "schema" in expose.get("contract", {}):
+            expose = dict(expose, schema=expose["contract"]["schema"])
+
         expose_id = expose.get("id", f"expose_{idx}")
         path_prefix = f"exposes[{idx}]"
 
@@ -903,7 +911,12 @@ class ContractValidator:
 
         for idx, consume in enumerate(consumes):
             consume_id = consume.get("id", f"consume_{idx}")
-            consume_ref = consume.get("ref")
+            # Accept FLUID DSL format (productId+exposeId) OR legacy ref field
+            consume_ref = (
+                consume.get("ref")
+                or consume.get("productId")
+                or consume.get("provider")
+            )
 
             path = f"consumes[{idx}]"
 

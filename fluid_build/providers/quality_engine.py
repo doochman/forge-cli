@@ -211,6 +211,15 @@ def execute_quality_checks(
             continue
 
         try:
+            # Support validValues from explicit key OR parsed from description
+            # Description format: "column valid values: val1, val2, val3."
+            explicit_vv = rule.get("validValues", [])
+            if not explicit_vv and description and " valid values:" in description.lower():
+                import re as _re
+                m = _re.search(r"valid values:\s*([^.]+)", description, _re.IGNORECASE)
+                if m:
+                    explicit_vv = [v.strip() for v in m.group(1).split(",") if v.strip()]
+
             result = _execute_single_rule(
                 rule_id=rule_id,
                 rule_type=rule_type,
@@ -219,7 +228,7 @@ def execute_quality_checks(
                 description=description,
                 threshold=threshold,
                 operator=operator,
-                valid_values=rule.get("validValues", []),
+                valid_values=explicit_vv,
                 window=rule.get("window", rule.get("freshness")),
                 table_ref=table_ref,
                 execute_fn=execute_fn,
@@ -336,6 +345,29 @@ def _execute_single_rule(
             table_ref,
             execute_fn,
             dialect,
+        )
+    elif rule_type == "anomaly_detection":
+        # Row-count anomaly detection: selector '*' means COUNT(*) >= threshold
+        return _check_anomaly_detection(
+            rule_id,
+            selector,
+            severity,
+            description,
+            threshold,
+            operator,
+            table_ref,
+            execute_fn,
+        )
+    elif rule_type == "valid_values":
+        # Alias for validity — checks that column values are in the validValues list
+        return _check_validity(
+            rule_id,
+            selector,
+            severity,
+            description,
+            valid_values,
+            table_ref,
+            execute_fn,
         )
     else:
         return QualityCheckResult(
@@ -551,3 +583,40 @@ def _check_freshness(
         expected=f"<= {max_age_seconds}s",
         actual=f"{float(age_seconds):.0f}s",
     )
+
+
+def _check_anomaly_detection(
+    rule_id,
+    selector,
+    severity,
+    description,
+    threshold,
+    operator,
+    table_ref,
+    execute_fn,
+) -> QualityCheckResult:
+    """Anomaly detection via row-count check (selector '*') or MIN/MAX check for a column."""
+    if selector == "*" or selector == "":
+        sql = f"SELECT COUNT(*) AS row_count FROM {table_ref}"
+        rows = execute_fn(sql)
+        row_count = rows[0][0] if rows and rows[0][0] is not None else 0
+        passed = _compare(row_count, threshold, operator) if threshold is not None else row_count > 0
+        return QualityCheckResult(
+            rule_id=rule_id,
+            rule_type="anomaly_detection",
+            selector=selector,
+            passed=passed,
+            severity=severity,
+            message=(
+                f"{description or rule_id} — row count {row_count} does not satisfy {operator} {threshold}"
+                if not passed
+                else f"Anomaly detection OK: row count = {row_count}"
+            ),
+            expected=f"{operator} {threshold}" if threshold is not None else "> 0",
+            actual=str(row_count),
+        )
+    else:
+        # Column-level anomaly: check MIN value
+        return _check_accuracy(
+            rule_id, selector, severity, description, threshold, operator, table_ref, execute_fn
+        )

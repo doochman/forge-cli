@@ -57,12 +57,12 @@ class LocalValidationProvider(ValidationProvider):
     """Validation provider for local files using DuckDB."""
 
     TYPE_MAPPINGS: Dict[str, List[str]] = {
-        "VARCHAR": ["VARCHAR", "STRING", "TEXT", "CHAR"],
-        "BIGINT": ["BIGINT", "INT", "INTEGER", "SMALLINT", "TINYINT", "INT64"],
+        "VARCHAR": ["VARCHAR", "STRING", "TEXT", "CHAR", "JSON", "JSONB"],
+        "BIGINT": ["BIGINT", "INT", "INTEGER", "SMALLINT", "TINYINT", "INT64", "HUGEINT", "UBIGINT", "UINTEGER"],
         "DOUBLE": ["DOUBLE", "FLOAT", "REAL", "DECIMAL", "NUMERIC", "FLOAT64"],
         "BOOLEAN": ["BOOLEAN", "BOOL"],
         "DATE": ["DATE"],
-        "TIMESTAMP": ["TIMESTAMP", "DATETIME", "TIMESTAMP_NTZ"],
+        "TIMESTAMP": ["TIMESTAMP", "DATETIME", "TIMESTAMP_NTZ", "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE"],
         "TIME": ["TIME"],
         "BLOB": ["BLOB", "BINARY", "BYTES", "VARBINARY"],
         "JSON": ["JSON", "JSONB", "VARIANT"],
@@ -119,6 +119,36 @@ class LocalValidationProvider(ValidationProvider):
 
             try:
                 ext = path.suffix.lower()
+                abs_path = str(path.resolve())
+
+                # DuckDB native database file — connect and query the table directly
+                if ext in (".duckdb", ".db"):
+                    binding = resource_spec.get("binding", {})
+                    loc = binding.get("location", {})
+                    schema_name = loc.get("schema", "main")
+                    table_name = loc.get("table", "")
+                    if not table_name:
+                        LOG.warning("DuckDB binding: no table specified in location")
+                        return None
+                    conn.close()
+                    conn = duckdb.connect(abs_path, read_only=True)
+                    table_ref = f'"{schema_name}"."{table_name}"'
+                    describe_sql = f"DESCRIBE SELECT * FROM {table_ref}"
+                    rows = conn.execute(describe_sql).fetchall()
+                    fields: List[FieldSchema] = []
+                    for row in rows:
+                        fields.append(FieldSchema(name=row[0], type=row[1], mode="NULLABLE"))
+                    count_row = conn.execute(f"SELECT COUNT(*) FROM {table_ref}").fetchone()
+                    row_count = count_row[0] if count_row else None
+                    size_bytes = path.stat().st_size
+                    conn.close()
+                    return ResourceSchema(
+                        resource_type=ResourceType.TABLE,
+                        fields=fields,
+                        row_count=row_count,
+                        size_bytes=size_bytes,
+                    )
+
                 if ext in (".parquet", ".pq"):
                     read_fn = "read_parquet"
                 elif ext in (".csv", ".tsv"):
@@ -129,7 +159,6 @@ class LocalValidationProvider(ValidationProvider):
                     LOG.warning("Unsupported file extension: %s", ext)
                     return None
 
-                abs_path = str(path.resolve())
                 # Use parameterised path – DuckDB read functions accept a string literal
                 describe_sql = "DESCRIBE SELECT * FROM {fn}('{p}')".format(
                     fn=read_fn, p=abs_path.replace("'", "''")
@@ -327,6 +356,40 @@ class LocalValidationProvider(ValidationProvider):
                 )
             ]
         ext = path.suffix.lower()
+        abs_path = str(path.resolve())
+        duckdb = self._get_duckdb()
+
+        # DuckDB native database: connect directly and query the bound table
+        if ext in (".duckdb", ".db"):
+            binding = resource_spec.get("binding", {})
+            loc = binding.get("location", {})
+            schema_name = loc.get("schema", "main")
+            table_name = loc.get("table", "")
+            if not table_name:
+                return [
+                    ValidationIssue(
+                        severity="warning",
+                        category="quality",
+                        message="DuckDB binding missing location.table — cannot run quality checks",
+                        path="contract.dq.rules",
+                    )
+                ]
+            conn = duckdb.connect(abs_path, read_only=True)
+            table_ref = f'"{schema_name}"."{table_name}"'
+            try:
+                def _exec(sql):
+                    return conn.execute(sql).fetchall()
+
+                results = execute_quality_checks(
+                    rules=rules,
+                    table_ref=table_ref,
+                    execute_fn=_exec,
+                    dialect="ansi",
+                )
+                return quality_results_to_issues(results)
+            finally:
+                conn.close()
+
         if ext in (".parquet", ".pq"):
             read_fn = "read_parquet"
         elif ext in (".csv", ".tsv"):
@@ -342,9 +405,7 @@ class LocalValidationProvider(ValidationProvider):
                     path="contract.dq.rules",
                 )
             ]
-        abs_path = str(path.resolve())
         table_ref = "{fn}('{p}')".format(fn=read_fn, p=abs_path.replace("'", "''"))
-        duckdb = self._get_duckdb()
         conn = duckdb.connect(":memory:")
         try:
 
