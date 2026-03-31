@@ -2,8 +2,8 @@
 """Check if policy tags are attached to table fields"""
 from google.cloud import bigquery
 
-client = bigquery.Client(project='<<YOUR_PROJECT_HERE>>')
-table = client.get_table('crypto_data.bitcoin_prices_enhanced')
+client = bigquery.Client(project="<<YOUR_PROJECT_HERE>>")
+table = client.get_table("crypto_data.bitcoin_prices_enhanced")
 
 print("=" * 80)
 print("POLICY TAGS ON TABLE FIELDS")
@@ -25,7 +25,9 @@ if not has_tags:
     print("The schema update was 'additive only', so policy tags weren't applied.")
     print()
     print("To fix: Drop and recreate the table:")
-    print("  1. Backup data: bq extract crypto_data.bitcoin_prices_enhanced gs://bucket/backup.json")
+    print(
+        "  1. Backup data: bq extract crypto_data.bitcoin_prices_enhanced gs://bucket/backup.json"
+    )
     print("  2. Drop table: bq rm -t crypto_data.bitcoin_prices_enhanced")
     print("  3. Re-apply: python -m fluid_build apply contract.fluid.yaml")
     print("  4. Restore data if needed")
@@ -49,11 +51,11 @@ try:
         count += 1
         print(f"\n✅ Taxonomy: {taxonomy.display_name}")
         print(f"   Name: {taxonomy.name}")
-        print(f"   Policy Tags:")
-        
+        print("   Policy Tags:")
+
         for tag in dc_client.list_policy_tags(parent=taxonomy.name):
             print(f"      - {tag.display_name} ({tag.name})")
-    
+
     if count == 0:
         print("⚠️  No taxonomies found")
     else:

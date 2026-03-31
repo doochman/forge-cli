@@ -33,68 +33,68 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 LICENSES = {
     "apache2": (
-        '# Copyright {YEARS} {HOLDER}\n'
-        '#\n'
+        "# Copyright {YEARS} {HOLDER}\n"
+        "#\n"
         '# Licensed under the Apache License, Version 2.0 (the "License");\n'
-        '# you may not use this file except in compliance with the License.\n'
-        '# You may obtain a copy of the License at\n'
-        '#\n'
-        '#     http://www.apache.org/licenses/LICENSE-2.0\n'
-        '#\n'
-        '# Unless required by applicable law or agreed to in writing, software\n'
+        "# you may not use this file except in compliance with the License.\n"
+        "# You may obtain a copy of the License at\n"
+        "#\n"
+        "#     http://www.apache.org/licenses/LICENSE-2.0\n"
+        "#\n"
+        "# Unless required by applicable law or agreed to in writing, software\n"
         '# distributed under the License is distributed on an "AS IS" BASIS,\n'
-        '# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n'
-        '# See the License for the specific language governing permissions and\n'
-        '# limitations under the License.\n'
+        "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n"
+        "# See the License for the specific language governing permissions and\n"
+        "# limitations under the License.\n"
     ),
     "mit": (
-        '# Copyright (c) {YEARS} {HOLDER}\n'
-        '#\n'
-        '# Permission is hereby granted, free of charge, to any person obtaining a copy\n'
+        "# Copyright (c) {YEARS} {HOLDER}\n"
+        "#\n"
+        "# Permission is hereby granted, free of charge, to any person obtaining a copy\n"
         '# of this software and associated documentation files (the "Software"), to deal\n'
-        '# in the Software without restriction, including without limitation the rights\n'
-        '# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n'
-        '# copies of the Software, and to permit persons to whom the Software is\n'
-        '# furnished to do so, subject to the following conditions:\n'
-        '#\n'
-        '# The above copyright notice and this permission notice shall be included in\n'
-        '# all copies or substantial portions of the Software.\n'
-        '#\n'
+        "# in the Software without restriction, including without limitation the rights\n"
+        "# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n"
+        "# copies of the Software, and to permit persons to whom the Software is\n"
+        "# furnished to do so, subject to the following conditions:\n"
+        "#\n"
+        "# The above copyright notice and this permission notice shall be included in\n"
+        "# all copies or substantial portions of the Software.\n"
+        "#\n"
         '# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n'
-        '# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n'
-        '# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n'
-        '# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n'
-        '# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n'
-        '# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n'
-        '# THE SOFTWARE.\n'
+        "# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n"
+        "# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n"
+        "# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n"
+        "# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n"
+        "# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n"
+        "# THE SOFTWARE.\n"
     ),
     "bsd3": (
-        '# Copyright (c) {YEARS} {HOLDER}\n'
-        '# All rights reserved.\n'
-        '#\n'
-        '# Redistribution and use in source and binary forms, with or without\n'
-        '# modification, are permitted provided that the following conditions are met:\n'
-        '#\n'
-        '# 1. Redistributions of source code must retain the above copyright notice,\n'
-        '#    this list of conditions and the following disclaimer.\n'
-        '# 2. Redistributions in binary form must reproduce the above copyright notice,\n'
-        '#    this list of conditions and the following disclaimer in the documentation\n'
-        '#    and/or other materials provided with the distribution.\n'
-        '# 3. Neither the name of the copyright holder nor the names of its\n'
-        '#    contributors may be used to endorse or promote products derived from\n'
-        '#    this software without specific prior written permission.\n'
-        '#\n'
+        "# Copyright (c) {YEARS} {HOLDER}\n"
+        "# All rights reserved.\n"
+        "#\n"
+        "# Redistribution and use in source and binary forms, with or without\n"
+        "# modification, are permitted provided that the following conditions are met:\n"
+        "#\n"
+        "# 1. Redistributions of source code must retain the above copyright notice,\n"
+        "#    this list of conditions and the following disclaimer.\n"
+        "# 2. Redistributions in binary form must reproduce the above copyright notice,\n"
+        "#    this list of conditions and the following disclaimer in the documentation\n"
+        "#    and/or other materials provided with the distribution.\n"
+        "# 3. Neither the name of the copyright holder nor the names of its\n"
+        "#    contributors may be used to endorse or promote products derived from\n"
+        "#    this software without specific prior written permission.\n"
+        "#\n"
         '# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"\n'
-        '# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n'
-        '# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n'
-        '# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE\n'
-        '# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n'
-        '# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n'
-        '# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n'
-        '# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n'
-        '# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n'
-        '# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n'
-        '# POSSIBILITY OF SUCH DAMAGE.\n'
+        "# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n"
+        "# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n"
+        "# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE\n"
+        "# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n"
+        "# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n"
+        "# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n"
+        "# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n"
+        "# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n"
+        "# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n"
+        "# POSSIBILITY OF SUCH DAMAGE.\n"
     ),
 }
 
@@ -106,17 +106,19 @@ DEFAULT_DIRS = ["fluid_build", "tests"]
 # Regex that matches any of our known license header blocks (for replacement/removal).
 # Handles single or corrupted dual-header blocks (e.g. MIT + Apache fragments).
 HEADER_PATTERN = re.compile(
-    r'^(#![^\n]*\n)?'          # optional shebang
-    r'(# Copyright.*?\n'       # copyright line
-    r'(?:#[^\n]*\n)*?'         # continuation comment lines
-    r'# .*(?:License|LICENSE|Permission|WARRANTY|DAMAGE|DEALINGS)[^\n]*\n'
-    r'(?:\n?# [^\n]*\n)*?'    # possible blank comment + more license lines (dual-header)
-    r'(?:# .*(?:License|LICENSE|Permission|WARRANTY|DAMAGE|DEALINGS)[^\n]*\n)?)',  # second terminator
+    r"^(#![^\n]*\n)?"  # optional shebang
+    r"(# Copyright.*?\n"  # copyright line
+    r"(?:#[^\n]*\n)*?"  # continuation comment lines
+    r"# .*(?:License|LICENSE|Permission|WARRANTY|DAMAGE|DEALINGS)[^\n]*\n"
+    r"(?:\n?# [^\n]*\n)*?"  # possible blank comment + more license lines (dual-header)
+    r"(?:# .*(?:License|LICENSE|Permission|WARRANTY|DAMAGE|DEALINGS)[^\n]*\n)?)",  # second terminator
     re.MULTILINE,
 )
 
 
-def build_header(license_key: str, holder: str, years: str, template_path: str | None = None) -> str:
+def build_header(
+    license_key: str, holder: str, years: str, template_path: str | None = None
+) -> str:
     """Build the license header string."""
     if template_path:
         text = Path(template_path).read_text()
@@ -145,39 +147,50 @@ def has_license_header(content: str) -> bool:
 
 def remove_header(content: str) -> str:
     """Remove an existing license header from file content.
-    
+
     Handles single headers (Apache or MIT) and corrupted dual-headers
     (MIT body + orphaned Apache fragment) by stripping all leading comment
     lines that are part of a license block.
     """
     lines = content.splitlines(True)
-    
+
     # Preserve shebang
     start = 0
     shebang = ""
     if lines and lines[0].startswith("#!"):
         shebang = lines[0]
         start = 1
-    
+
     # Preserve encoding declaration
     if start < len(lines) and lines[start].startswith("# -*- coding"):
         shebang += lines[start]
         start += 1
-    
+
     # Find the end of the license block: contiguous comment/blank lines
     # that contain license keywords
     end = start
     found_copyright = False
     found_license_end = False
-    
+
     for i in range(start, len(lines)):
         line = lines[i].rstrip()
-        
+
         if line.startswith("#"):
             if "Copyright" in line:
                 found_copyright = True
-            if any(kw in line for kw in ("License", "LICENSE", "Permission", "WARRANTY", 
-                                          "DEALINGS", "DAMAGE", "apache.org", "THE SOFTWARE")):
+            if any(
+                kw in line
+                for kw in (
+                    "License",
+                    "LICENSE",
+                    "Permission",
+                    "WARRANTY",
+                    "DEALINGS",
+                    "DAMAGE",
+                    "apache.org",
+                    "THE SOFTWARE",
+                )
+            ):
                 found_license_end = True
             end = i + 1
         elif line == "":
@@ -188,10 +201,14 @@ def remove_header(content: str) -> str:
                 next_content = i + 1
                 while next_content < len(lines) and lines[next_content].strip() == "":
                     next_content += 1
-                if (next_content < len(lines) and 
-                    lines[next_content].startswith("#") and
-                    any(kw in lines[next_content] for kw in 
-                        ("License", "you may not", "apache.org", "Copyright"))):
+                if (
+                    next_content < len(lines)
+                    and lines[next_content].startswith("#")
+                    and any(
+                        kw in lines[next_content]
+                        for kw in ("License", "you may not", "apache.org", "Copyright")
+                    )
+                ):
                     end = i + 1
                     found_license_end = False  # reset — there's more header
                 else:
@@ -200,10 +217,10 @@ def remove_header(content: str) -> str:
                 end = i + 1
         else:
             break
-    
+
     if not found_copyright:
         return content
-    
+
     # Strip the header and any trailing blank lines
     result = shebang + "".join(lines[end:]).lstrip("\n")
     return result
@@ -232,7 +249,9 @@ def add_header(content: str, header: str) -> str:
     return prefix + header + separator + suffix
 
 
-def process_file(path: Path, header: str, *, remove_only: bool = False, dry_run: bool = False) -> str:
+def process_file(
+    path: Path, header: str, *, remove_only: bool = False, dry_run: bool = False
+) -> str:
     """Process a single file. Returns 'added', 'replaced', 'removed', or 'skipped'."""
     content = path.read_text(encoding="utf-8", errors="replace")
 
@@ -294,31 +313,40 @@ Examples:
         """,
     )
     parser.add_argument(
-        "--license", choices=list(LICENSES.keys()), default=DEFAULT_LICENSE,
+        "--license",
+        choices=list(LICENSES.keys()),
+        default=DEFAULT_LICENSE,
         help=f"Built-in license template (default: {DEFAULT_LICENSE})",
     )
     parser.add_argument(
-        "--template", metavar="FILE",
+        "--template",
+        metavar="FILE",
         help="Path to a custom license template file (overrides --license)",
     )
     parser.add_argument(
-        "--holder", default=DEFAULT_HOLDER,
+        "--holder",
+        default=DEFAULT_HOLDER,
         help=f"Copyright holder (default: {DEFAULT_HOLDER})",
     )
     parser.add_argument(
-        "--years", default=DEFAULT_YEARS,
+        "--years",
+        default=DEFAULT_YEARS,
         help=f"Copyright years (default: {DEFAULT_YEARS})",
     )
     parser.add_argument(
-        "--dirs", nargs="+", default=DEFAULT_DIRS,
+        "--dirs",
+        nargs="+",
+        default=DEFAULT_DIRS,
         help=f"Directories to process (default: {' '.join(DEFAULT_DIRS)})",
     )
     parser.add_argument(
-        "--remove", action="store_true",
+        "--remove",
+        action="store_true",
         help="Remove existing license headers instead of adding them",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show what would change without modifying files",
     )
 
@@ -348,8 +376,10 @@ Examples:
         if result != "skipped":
             print(f"  {result:>8}  {rel}")
 
-    print(f"\nDone: {counts['added']} added, {counts['replaced']} replaced, "
-          f"{counts['removed']} removed, {counts['skipped']} skipped")
+    print(
+        f"\nDone: {counts['added']} added, {counts['replaced']} replaced, "
+        f"{counts['removed']} removed, {counts['skipped']} skipped"
+    )
 
     if args.dry_run:
         print("\n(Dry run — no files were modified)")
