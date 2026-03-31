@@ -15,6 +15,10 @@
 """Project-memory helpers for the Forge copilot agent."""
 
 from __future__ import annotations
+__all__ = [
+    "CopilotProjectMemoryMixin",
+]
+
 
 import logging
 from pathlib import Path

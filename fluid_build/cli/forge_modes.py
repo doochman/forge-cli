@@ -15,6 +15,14 @@
 """Mode handlers for `fluid forge`."""
 
 from __future__ import annotations
+__all__ = [
+    "run_ai_copilot_mode",
+    "run_blueprint_mode",
+    "run_domain_agent_mode",
+    "run_forge_blueprint_impl",
+    "run_template_mode",
+]
+
 
 import logging
 from pathlib import Path

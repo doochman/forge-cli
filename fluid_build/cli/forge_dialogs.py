@@ -15,6 +15,19 @@
 """Shared friendly dialog helpers for interactive Forge experiences."""
 
 from __future__ import annotations
+__all__ = [
+    "ChoiceMatchResult",
+    "DialogQuestionResult",
+    "ask_confirmation",
+    "ask_dialog_question",
+    "ask_flexible_choice",
+    "ask_friendly_text",
+    "build_choice",
+    "normalize_choice_value",
+    "normalize_prompt_choices",
+    "resolve_choice_input",
+]
+
 
 import re
 from dataclasses import dataclass

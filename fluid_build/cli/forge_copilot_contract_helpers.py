@@ -15,6 +15,22 @@
 """Pure helper logic for the Forge copilot runtime."""
 
 from __future__ import annotations
+__all__ = [
+    "KNOWN_BUILD_ENGINES",
+    "PROVIDER_ENGINE_COMPATIBILITY",
+    "TEMPLATE_ALIASES",
+    "build_seed_contract",
+    "classify_generation_failure",
+    "extract_json_object",
+    "normalize_generation_payload",
+    "normalize_provider_name",
+    "normalize_template_name",
+    "redact_secret_like_text",
+    "sanitize_additional_files",
+    "sanitize_name",
+    "validate_generated_result",
+]
+
 
 import json
 import re

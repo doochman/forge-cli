@@ -15,6 +15,12 @@
 """Core copilot agent orchestration for Forge."""
 
 from __future__ import annotations
+__all__ = [
+    "AIAgent",
+    "CopilotAgentBase",
+    "recommend_template_for_use_case",
+]
+
 
 import logging
 import re
@@ -25,7 +31,7 @@ from typing import Any, Dict, List, Optional
 from fluid_build.cli.console import cprint
 from fluid_build.cli.console import error as console_error
 from fluid_build.cli.forge_copilot_interview import run_post_generation_clarification
-from fluid_build.cli.forge_copilot_legacy_mixin import CopilotLegacyScaffoldMixin
+from fluid_build.cli.forge_copilot_scaffold_mixin import CopilotLegacyScaffoldMixin
 from fluid_build.cli.forge_copilot_memory import CopilotMemoryStore
 from fluid_build.cli.forge_copilot_memory_mixin import CopilotProjectMemoryMixin
 from fluid_build.cli.forge_copilot_runtime import (
@@ -520,7 +526,5 @@ class CopilotAgentBase(CopilotProjectMemoryMixin, CopilotLegacyScaffoldMixin, AI
         return config
 
 
-class CopilotAgent(CopilotAgentBase):
-    """Default public copilot implementation."""
-
-    pass
+# CopilotAgent is defined in forge.py where it wires module-level dependencies.
+# Import it from there: ``from fluid_build.cli.forge import CopilotAgent``

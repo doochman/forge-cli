@@ -15,6 +15,13 @@
 """Prompt builders for the LLM-backed Forge copilot."""
 
 from __future__ import annotations
+__all__ = [
+    "build_clarification_system_prompt",
+    "build_clarification_user_prompt",
+    "build_system_prompt",
+    "build_user_prompt",
+]
+
 
 import json
 from typing import Any, Mapping, Optional, Sequence

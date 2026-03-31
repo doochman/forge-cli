@@ -15,6 +15,10 @@
 """Legacy copilot scaffold and analysis helpers kept for compatibility."""
 
 from __future__ import annotations
+__all__ = [
+    "CopilotLegacyScaffoldMixin",
+]
+
 
 import json
 import logging

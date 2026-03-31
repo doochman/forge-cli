@@ -15,6 +15,17 @@
 """Shared Forge user-facing copy and Rich panel helpers."""
 
 from __future__ import annotations
+__all__ = [
+    "build_copilot_analysis_text",
+    "build_standard_next_steps",
+    "print_assumptions_panel",
+    "print_welcome_panel",
+    "show_copilot_analysis",
+    "show_domain_analysis",
+    "show_lines_panel",
+    "show_next_steps_panel",
+]
+
 
 from typing import Any, Iterable, Mapping, Optional, Sequence
 

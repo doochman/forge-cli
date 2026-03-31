@@ -15,6 +15,15 @@
 """Shared Forge context loading, memory management, and dialog utilities."""
 
 from __future__ import annotations
+__all__ = [
+    "gather_copilot_context",
+    "get_cli_arg",
+    "get_target_directory",
+    "handle_memory_management",
+    "load_context",
+    "resolve_memory_store",
+]
+
 
 import json
 from pathlib import Path

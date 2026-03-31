@@ -26,22 +26,12 @@ from fluid_build.cli.console import cprint
 from fluid_build.cli.console import error as console_error
 from fluid_build.cli.forge_agents import DOMAIN_AGENTS
 from fluid_build.cli.forge_context import (
-    gather_copilot_context as _gather_copilot_context_impl,
-)
-from fluid_build.cli.forge_context import (
-    get_cli_arg as _get_cli_arg_impl,
-)
-from fluid_build.cli.forge_context import (
-    get_target_directory as _get_target_directory_impl,
-)
-from fluid_build.cli.forge_context import (
-    handle_memory_management as _handle_memory_management_impl,
-)
-from fluid_build.cli.forge_context import (
-    load_context as _load_context_impl,
-)
-from fluid_build.cli.forge_context import (
-    resolve_memory_store as _resolve_memory_store_impl,
+    gather_copilot_context as _gather_context,
+    get_cli_arg as _get_cli_arg,
+    get_target_directory as _get_target_dir,
+    handle_memory_management as _handle_memory,
+    load_context as _load_ctx,
+    resolve_memory_store as _resolve_store,
 )
 from fluid_build.cli.forge_copilot_agent import (
     AIAgent,
@@ -67,19 +57,11 @@ from fluid_build.cli.forge_copilot_runtime import (
 from fluid_build.cli.forge_copilot_taxonomy import normalize_copilot_context
 from fluid_build.cli.forge_dialogs import ask_confirmation
 from fluid_build.cli.forge_modes import (
-    run_ai_copilot_mode as _run_ai_copilot_mode_impl,
-)
-from fluid_build.cli.forge_modes import (
-    run_blueprint_mode as _run_blueprint_mode_impl,
-)
-from fluid_build.cli.forge_modes import (
-    run_domain_agent_mode as _run_domain_agent_mode_impl,
-)
-from fluid_build.cli.forge_modes import (
-    run_forge_blueprint_impl as _run_forge_blueprint_impl,
-)
-from fluid_build.cli.forge_modes import (
-    run_template_mode as _run_template_mode_impl,
+    run_ai_copilot_mode as _run_copilot,
+    run_blueprint_mode as _run_blueprint,
+    run_domain_agent_mode as _run_agent,
+    run_forge_blueprint_impl as _run_blueprint_legacy,
+    run_template_mode as _run_template,
 )
 from fluid_build.cli.forge_ui import print_welcome_panel
 
@@ -318,19 +300,19 @@ def register(subparsers: argparse._SubParsersAction):
 
 
 def get_target_directory(args, default_name: str = "my-fluid-project") -> Path:
-    return _get_target_directory_impl(args, default_name)
+    return _get_target_dir(args, default_name)
 
 
 def get_cli_arg(args: Any, name: str, default: Any = None) -> Any:
-    return _get_cli_arg_impl(args, name, default)
+    return _get_cli_arg(args, name, default)
 
 
 def resolve_memory_store(args, logger: logging.Logger) -> CopilotMemoryStore:
-    return _resolve_memory_store_impl(args, logger, memory_store_class=CopilotMemoryStore)
+    return _resolve_store(args, logger, memory_store_class=CopilotMemoryStore)
 
 
 def handle_memory_management(args, logger: logging.Logger) -> int:
-    return _handle_memory_management_impl(
+    return _handle_memory(
         args,
         logger,
         memory_store_class=CopilotMemoryStore,
@@ -379,7 +361,7 @@ def run(args, logger: logging.Logger) -> int:
 
 
 def run_ai_copilot_mode(args, logger: logging.Logger) -> int:
-    return _run_ai_copilot_mode_impl(
+    return _run_copilot(
         args,
         logger,
         copilot_class=CopilotAgent,
@@ -393,7 +375,7 @@ def run_ai_copilot_mode(args, logger: logging.Logger) -> int:
 
 
 def run_domain_agent_mode(args, logger: logging.Logger) -> int:
-    return _run_domain_agent_mode_impl(
+    return _run_agent(
         args,
         logger,
         ai_agents=AI_AGENTS,
@@ -406,7 +388,7 @@ def run_domain_agent_mode(args, logger: logging.Logger) -> int:
 
 
 def run_template_mode(args, logger: logging.Logger) -> int:
-    return _run_template_mode_impl(
+    return _run_template(
         args,
         logger,
         get_target_directory_fn=get_target_directory,
@@ -415,11 +397,11 @@ def run_template_mode(args, logger: logging.Logger) -> int:
 
 
 def gather_copilot_context(copilot: CopilotAgent, console) -> Dict[str, Any]:
-    return _gather_copilot_context_impl(copilot, console)
+    return _gather_context(copilot, console)
 
 
 def run_blueprint_mode(args, logger: logging.Logger) -> int:
-    return _run_blueprint_mode_impl(
+    return _run_blueprint(
         args,
         logger,
         blueprint_registry=blueprint_registry,
@@ -435,7 +417,7 @@ def load_context(
     *,
     context_error_cls: type[Exception] = ContextValidationError,
 ) -> Dict[str, Any]:
-    return _load_context_impl(
+    return _load_ctx(
         context_input,
         console,
         context_error_cls=context_error_cls,
@@ -443,7 +425,7 @@ def load_context(
 
 
 def _run_forge_blueprint(args, blueprint_registry):
-    return _run_forge_blueprint_impl(
+    return _run_blueprint_legacy(
         args,
         blueprint_registry,
         get_target_directory_fn=get_target_directory,
