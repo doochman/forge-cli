@@ -234,7 +234,12 @@ class TestMapOutputPortsV071:
         assert ports[0]["id"] == "btc_table"
         assert ports[0]["name"] == "Bitcoin Prices"
         assert ports[0]["type"] == "BigQuery"
-        assert ports[0]["location"] == "p.d.t"
+        # After DPS 0.0.1 refactor, output ports use structured server objects
+        # GCP binding maps: project→account, dataset→database, table→table
+        server = ports[0]["server"]
+        assert server["account"] == "p"
+        assert server["database"] == "d"
+        assert server["table"] == "t"
 
 
 # ===================================================================
@@ -329,7 +334,7 @@ class TestPublishDataContractInternal:
     def test_includes_domain(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         assert payload["info"]["domain"] == "finance"
 
@@ -337,7 +342,7 @@ class TestPublishDataContractInternal:
     def test_includes_dq_rules(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         checks = payload["quality"]["checks"]
         assert len(checks) == 2
@@ -351,7 +356,7 @@ class TestPublishDataContractInternal:
     def test_includes_server_from_binding(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         servers = payload["servers"]
         assert "btc_prices" in servers
@@ -364,7 +369,7 @@ class TestPublishDataContractInternal:
     def test_includes_sla_and_completeness(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         q = payload["quality"]
         assert q["freshness"] == "PT1H"
@@ -375,7 +380,7 @@ class TestPublishDataContractInternal:
     def test_includes_builds_as_custom(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         assert payload["custom"]["builds"]["runtime"] == "python3.11"
 
@@ -383,7 +388,7 @@ class TestPublishDataContractInternal:
     def test_includes_tags_and_labels(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         assert "crypto" in payload["custom"]["tags"]
         assert payload["custom"]["labels"]["cost_center"] == "CC-123"
@@ -392,7 +397,7 @@ class TestPublishDataContractInternal:
     def test_field_mapping_includes_required_and_sensitivity(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         fields = payload["models"]["btc_prices"]["fields"]
         assert fields["price_usd"]["required"] is True
@@ -402,7 +407,7 @@ class TestPublishDataContractInternal:
     def test_model_uses_kind(self, mock_req):
         mock_req.return_value = MagicMock(status_code=200)
         provider = _make_provider()
-        provider._publish_data_contract_internal(self._fluid_contract(), "test-product")
+        provider._publish_data_contract_internal(self._fluid_contract(), "test-product", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         assert payload["models"]["btc_prices"]["type"] == "table"
 
@@ -429,7 +434,7 @@ class TestPublishDataContractInternal:
                 }
             ],
         }
-        provider._publish_data_contract_internal(fluid, "test")
+        provider._publish_data_contract_internal(fluid, "test", fmt="dcs")
         payload = mock_req.call_args[1]["json_body"]
         server = payload["servers"]["tbl"]
         assert "account" not in server  # template var excluded

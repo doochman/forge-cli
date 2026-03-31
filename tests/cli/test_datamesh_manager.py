@@ -987,8 +987,10 @@ class TestDataContractIdWiring:
         for port in dp_body.get("outputPorts", []):
             assert port["dataContractId"] == "bronze.bss.accounts-contract"
 
-    def test_no_contract_id_without_flag(self):
+    def test_contract_id_always_present_on_output_ports(self):
+        """After rebase, _to_data_product always wires dataContractId on
+        output ports (per-expose ODCS linking)."""
         provider = self._make_provider()
         dp = provider._to_data_product(RICH_CONTRACT)
         for port in dp.get("outputPorts", []):
-            assert "dataContractId" not in port
+            assert "dataContractId" in port

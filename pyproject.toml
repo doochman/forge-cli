@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fluid-forge"
-version = "0.7.5"
+version = "0.7.6"
 description = "FLUID Build System: plan/apply/visualize data products across providers (GCP, Snowflake, Local) with policy & contract tests."
 readme = "README.md"
 requires-python = ">=3.9"
