@@ -26,8 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from fluid_build.cli._common import redact_secrets, resolve_provider_from_contract
-from fluid_build.schema_manager import FluidSchemaManager
-from fluid_build.util.contract import get_builds
 
 # ---------------------------------------------------------------------------
 # Re-exports: contract helpers
@@ -47,11 +45,18 @@ from fluid_build.cli.forge_copilot_contract_helpers import (  # noqa: F401
     sanitize_additional_files,
     sanitize_name,
 )
+
 # These need thin wrappers below because they inject dependencies:
 from fluid_build.cli.forge_copilot_contract_helpers import (
     build_seed_contract as _build_seed_contract_raw,
+)
+from fluid_build.cli.forge_copilot_contract_helpers import (
     normalize_generation_payload as _normalize_generation_payload_raw,
+)
+from fluid_build.cli.forge_copilot_contract_helpers import (
     redact_secret_like_text as _redact_secret_like_text_raw,
+)
+from fluid_build.cli.forge_copilot_contract_helpers import (
     validate_generated_result as _validate_generated_result_raw,
 )
 
@@ -81,6 +86,11 @@ from fluid_build.cli.forge_copilot_llm_providers import (  # noqa: F401
 )
 
 # ---------------------------------------------------------------------------
+# Re-exports: memory, schema inference
+# ---------------------------------------------------------------------------
+from fluid_build.cli.forge_copilot_memory import CopilotMemorySnapshot  # noqa: F401
+
+# ---------------------------------------------------------------------------
 # Re-exports: prompts (need thin wrappers for engine list injection)
 # ---------------------------------------------------------------------------
 from fluid_build.cli.forge_copilot_prompts import (  # noqa: F401
@@ -91,14 +101,11 @@ from fluid_build.cli.forge_copilot_prompts import (  # noqa: F401
 from fluid_build.cli.forge_copilot_prompts import (
     build_system_prompt as _build_system_prompt_raw,
 )
-
-# ---------------------------------------------------------------------------
-# Re-exports: memory, schema inference
-# ---------------------------------------------------------------------------
-from fluid_build.cli.forge_copilot_memory import CopilotMemorySnapshot  # noqa: F401
 from fluid_build.cli.forge_copilot_schema_inference import (
     map_inferred_type_to_contract_type as _map_inferred_type_to_contract_type,
 )
+from fluid_build.schema_manager import FluidSchemaManager
+from fluid_build.util.contract import get_builds
 
 LOG = logging.getLogger("fluid.cli.forge_copilot")
 COPILOT_BUILTIN_PROVIDERS = ("local", "gcp", "aws", "snowflake")
@@ -107,6 +114,7 @@ COPILOT_BUILTIN_PROVIDERS = ("local", "gcp", "aws", "snowflake")
 # ---------------------------------------------------------------------------
 # Dataclasses (owned by this module)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class GenerationAttemptReport:
@@ -149,6 +157,7 @@ class CopilotGenerationResult:
 # ---------------------------------------------------------------------------
 # Thin wrappers that inject module-level dependencies
 # ---------------------------------------------------------------------------
+
 
 def build_system_prompt(capability_matrix: Mapping[str, Any]) -> str:
     """Build the system prompt, injecting the known build engines list."""
@@ -228,6 +237,7 @@ def redact_secret_like_text(text: str) -> str:
 # Core orchestration (owned by this module)
 # ---------------------------------------------------------------------------
 
+
 def build_capability_matrix() -> Dict[str, Any]:
     """Describe the locally available templates, providers, and supported engines."""
     warnings: List[str] = []
@@ -279,12 +289,8 @@ def build_capability_matrix() -> Dict[str, Any]:
         verified_provider_names.append(provider_name)
 
     if verified_provider_names:
-        provider_names = [
-            p for p in COPILOT_BUILTIN_PROVIDERS if p in verified_provider_names
-        ]
-        provider_names.extend(
-            sorted(p for p in verified_provider_names if p not in provider_names)
-        )
+        provider_names = [p for p in COPILOT_BUILTIN_PROVIDERS if p in verified_provider_names]
+        provider_names.extend(sorted(p for p in verified_provider_names if p not in provider_names))
     else:
         provider_names = list(COPILOT_BUILTIN_PROVIDERS)
         warnings.append(
@@ -337,8 +343,7 @@ def build_capability_matrix() -> Dict[str, Any]:
         "templates": templates,
         "build_engines": sorted(KNOWN_BUILD_ENGINES),
         "provider_engine_compatibility": {
-            provider: sorted(engines)
-            for provider, engines in PROVIDER_ENGINE_COMPATIBILITY.items()
+            provider: sorted(engines) for provider, engines in PROVIDER_ENGINE_COMPATIBILITY.items()
         },
         "warnings": warnings,
     }
@@ -358,7 +363,10 @@ def generate_copilot_artifacts(
     capabilities = dict(capability_matrix or build_capability_matrix())
     provider_adapter = get_llm_provider(llm_config.provider)
     scaffold_decision = _build_scaffold_decision(
-        context, discovery_report, capabilities, project_memory=project_memory,
+        context,
+        discovery_report,
+        capabilities,
+        project_memory=project_memory,
     )
     suggested_template = scaffold_decision.template
     suggested_provider = scaffold_decision.provider
@@ -414,7 +422,9 @@ def generate_copilot_artifacts(
             seed_provider=suggested_provider,
         )
         validation_errors, validation_warnings = validate_generated_result(
-            normalized, capabilities=capabilities, logger=logger,
+            normalized,
+            capabilities=capabilities,
+            logger=logger,
         )
         report.validation_errors = validation_errors
         report.validation_warnings = validation_warnings
@@ -466,7 +476,10 @@ def suggest_scaffold(
 ) -> tuple[str, str]:
     """Heuristically choose valid scaffold defaults used only as LLM guidance."""
     decision = _build_scaffold_decision(
-        context, discovery_report, capability_matrix, project_memory=project_memory,
+        context,
+        discovery_report,
+        capability_matrix,
+        project_memory=project_memory,
     )
     return decision.template, decision.provider
 
@@ -479,18 +492,23 @@ def _build_scaffold_decision(
     project_memory: Optional[CopilotMemorySnapshot] = None,
 ) -> ScaffoldDecisionReport:
     """Build explainable scaffold guidance before LLM generation."""
-    text = " ".join([
-        str(context.get("project_goal", "")),
-        str(context.get("use_case", "")),
-        str(context.get("use_case_other", "")),
-        str(context.get("data_sources", "")),
-        " ".join(discovery_report.provider_hints),
-    ]).lower()
+    text = " ".join(
+        [
+            str(context.get("project_goal", "")),
+            str(context.get("use_case", "")),
+            str(context.get("use_case_other", "")),
+            str(context.get("data_sources", "")),
+            " ".join(discovery_report.provider_hints),
+        ]
+    ).lower()
 
     available_providers = set(capability_matrix.get("providers") or [])
     fallback_provider = (
-        "local" if "local" in available_providers
-        else (sorted(available_providers)[0] if available_providers else COPILOT_BUILTIN_PROVIDERS[0])
+        "local"
+        if "local" in available_providers
+        else (
+            sorted(available_providers)[0] if available_providers else COPILOT_BUILTIN_PROVIDERS[0]
+        )
     )
 
     # --- Provider selection ---
@@ -498,7 +516,9 @@ def _build_scaffold_decision(
     if explicit_provider in available_providers:
         provider = explicit_provider
         provider_source = "explicit_context"
-        provider_reason = f"Using explicit provider hint '{explicit_provider}' from the current run."
+        provider_reason = (
+            f"Using explicit provider hint '{explicit_provider}' from the current run."
+        )
     elif discovery_report.provider_hints:
         provider = provider_source = provider_reason = ""
         for hint in discovery_report.provider_hints:
@@ -506,17 +526,23 @@ def _build_scaffold_decision(
             if candidate in available_providers:
                 provider = candidate
                 provider_source = "current_discovery"
-                provider_reason = f"Using current discovery provider hint '{candidate}' from local assets."
+                provider_reason = (
+                    f"Using current discovery provider hint '{candidate}' from local assets."
+                )
                 break
     elif "snowflake" in text:
         provider, provider_source = "snowflake", "heuristic_context"
         provider_reason = "Using the current run context because it references Snowflake."
     elif any(t in text for t in ("aws", "s3", "redshift", "athena", "glue")):
         provider, provider_source = "aws", "heuristic_context"
-        provider_reason = "Using the current run context because it references AWS-oriented sources."
+        provider_reason = (
+            "Using the current run context because it references AWS-oriented sources."
+        )
     elif any(t in text for t in ("gcp", "bigquery", "dataform", "composer")):
         provider, provider_source = "gcp", "heuristic_context"
-        provider_reason = "Using the current run context because it references GCP-oriented sources."
+        provider_reason = (
+            "Using the current run context because it references GCP-oriented sources."
+        )
     else:
         provider = provider_source = provider_reason = ""
 
@@ -546,16 +572,37 @@ def _build_scaffold_decision(
         template_reason = f"Using explicit template hint '{template}' from the current run."
     elif any(t in text for t in ("ml", "machine learning", "feature store", "model")):
         template, template_source = "ml_pipeline", "heuristic_context"
-        template_reason = "Using the current run context because it looks like a machine-learning pipeline."
+        template_reason = (
+            "Using the current run context because it looks like a machine-learning pipeline."
+        )
     elif any(t in text for t in ("stream", "kafka", "real-time", "realtime")):
         template, template_source = "streaming", "heuristic_context"
-        template_reason = "Using the current run context because it looks like a streaming workload."
-    elif any(t in text for t in ("etl", "ingest", "cdc", "multi-source", "sync", "data_platform", "data platform", "data lake", "lakehouse")):
+        template_reason = (
+            "Using the current run context because it looks like a streaming workload."
+        )
+    elif any(
+        t in text
+        for t in (
+            "etl",
+            "ingest",
+            "cdc",
+            "multi-source",
+            "sync",
+            "data_platform",
+            "data platform",
+            "data lake",
+            "lakehouse",
+        )
+    ):
         template, template_source = "etl_pipeline", "heuristic_context"
-        template_reason = "Using the current run context because it looks like an ingestion or ETL workload."
+        template_reason = (
+            "Using the current run context because it looks like an ingestion or ETL workload."
+        )
     elif any(t in text for t in ("analytics", "report", "dashboard", "bi", "metric")):
         template, template_source = "analytics", "heuristic_context"
-        template_reason = "Using the current run context because it looks like an analytics project."
+        template_reason = (
+            "Using the current run context because it looks like an analytics project."
+        )
     elif project_memory and normalize_template_name(project_memory.preferred_template) in templates:
         template = normalize_template_name(project_memory.preferred_template)
         template_source = "project_memory"
@@ -569,7 +616,10 @@ def _build_scaffold_decision(
         template_reason = "Falling back to the safe default template 'starter'."
 
     return ScaffoldDecisionReport(
-        template=template, provider=provider,
-        template_source=template_source, provider_source=provider_source,
-        template_reason=template_reason, provider_reason=provider_reason,
+        template=template,
+        provider=provider,
+        template_source=template_source,
+        provider_source=provider_source,
+        template_reason=template_reason,
+        provider_reason=provider_reason,
     )

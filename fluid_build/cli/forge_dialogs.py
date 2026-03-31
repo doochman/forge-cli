@@ -15,6 +15,7 @@
 """Shared friendly dialog helpers for interactive Forge experiences."""
 
 from __future__ import annotations
+
 __all__ = [
     "ChoiceMatchResult",
     "DialogQuestionResult",

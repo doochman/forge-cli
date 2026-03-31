@@ -115,11 +115,13 @@ class TestExtractJsonObject:
 
 class TestSanitizeAdditionalFiles:
     def test_valid_files(self):
-        result = sanitize_additional_files({
-            "scripts/setup.sh": "#!/bin/bash",
-            "src/main.py": "print('hello')",
-            "README.md": "# Readme",
-        })
+        result = sanitize_additional_files(
+            {
+                "scripts/setup.sh": "#!/bin/bash",
+                "src/main.py": "print('hello')",
+                "README.md": "# Readme",
+            }
+        )
         assert "scripts/setup.sh" in result
         assert "src/main.py" in result
         assert "README.md" in result

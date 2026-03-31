@@ -15,6 +15,7 @@
 """Shared Forge context loading, memory management, and dialog utilities."""
 
 from __future__ import annotations
+
 __all__ = [
     "gather_copilot_context",
     "get_cli_arg",

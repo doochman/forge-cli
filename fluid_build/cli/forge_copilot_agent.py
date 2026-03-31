@@ -15,6 +15,7 @@
 """Core copilot agent orchestration for Forge."""
 
 from __future__ import annotations
+
 __all__ = [
     "AIAgent",
     "CopilotAgentBase",
@@ -31,7 +32,6 @@ from typing import Any, Dict, List, Optional
 from fluid_build.cli.console import cprint
 from fluid_build.cli.console import error as console_error
 from fluid_build.cli.forge_copilot_interview import run_post_generation_clarification
-from fluid_build.cli.forge_copilot_scaffold_mixin import CopilotLegacyScaffoldMixin
 from fluid_build.cli.forge_copilot_memory import CopilotMemoryStore
 from fluid_build.cli.forge_copilot_memory_mixin import CopilotProjectMemoryMixin
 from fluid_build.cli.forge_copilot_runtime import (
@@ -44,6 +44,7 @@ from fluid_build.cli.forge_copilot_runtime import (
     normalize_template_name,
     resolve_llm_config,
 )
+from fluid_build.cli.forge_copilot_scaffold_mixin import CopilotLegacyScaffoldMixin
 from fluid_build.cli.forge_copilot_taxonomy import (
     USE_CASE_CHOICES,
     normalize_copilot_context,

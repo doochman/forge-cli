@@ -27,10 +27,20 @@ from fluid_build.cli.console import error as console_error
 from fluid_build.cli.forge_agents import DOMAIN_AGENTS
 from fluid_build.cli.forge_context import (
     gather_copilot_context as _gather_context,
+)
+from fluid_build.cli.forge_context import (
     get_cli_arg as _get_cli_arg,
+)
+from fluid_build.cli.forge_context import (
     get_target_directory as _get_target_dir,
+)
+from fluid_build.cli.forge_context import (
     handle_memory_management as _handle_memory,
+)
+from fluid_build.cli.forge_context import (
     load_context as _load_ctx,
+)
+from fluid_build.cli.forge_context import (
     resolve_memory_store as _resolve_store,
 )
 from fluid_build.cli.forge_copilot_agent import (
@@ -58,9 +68,17 @@ from fluid_build.cli.forge_copilot_taxonomy import normalize_copilot_context
 from fluid_build.cli.forge_dialogs import ask_confirmation
 from fluid_build.cli.forge_modes import (
     run_ai_copilot_mode as _run_copilot,
+)
+from fluid_build.cli.forge_modes import (
     run_blueprint_mode as _run_blueprint,
+)
+from fluid_build.cli.forge_modes import (
     run_domain_agent_mode as _run_agent,
+)
+from fluid_build.cli.forge_modes import (
     run_forge_blueprint_impl as _run_blueprint_legacy,
+)
+from fluid_build.cli.forge_modes import (
     run_template_mode as _run_template,
 )
 from fluid_build.cli.forge_ui import print_welcome_panel

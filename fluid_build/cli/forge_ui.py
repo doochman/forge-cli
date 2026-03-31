@@ -15,6 +15,7 @@
 """Shared Forge user-facing copy and Rich panel helpers."""
 
 from __future__ import annotations
+
 __all__ = [
     "build_copilot_analysis_text",
     "build_standard_next_steps",
