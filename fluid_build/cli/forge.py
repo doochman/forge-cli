@@ -29,6 +29,7 @@ providing powerful AI-assisted development capabilities.
 import argparse
 import json
 import logging
+import re
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,7 +43,6 @@ try:
     from rich.live import Live
     from rich.panel import Panel
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-    from rich.prompt import Confirm, Prompt
     from rich.status import Status
     from rich.table import Table
 
@@ -58,6 +58,22 @@ from .forge_copilot_memory import (
     resolve_copilot_memory_root,
     summarize_copilot_memory,
 )
+from .forge_dialogs import ask_confirmation, ask_dialog_question, print_dialog_status
+from .forge_copilot_interview import (
+    InterviewQuestion,
+    build_interview_summary_from_context,
+    run_adaptive_copilot_interview,
+    run_post_generation_clarification,
+)
+from .forge_copilot_taxonomy import (
+    USE_CASE_CHOICES,
+    USE_CASE_LABELS,
+    canonicalize_use_case_text as _canonicalize_use_case_text,
+    clean_text as _clean_text,
+    format_use_case_label,
+    normalize_copilot_context,
+    normalize_use_case,
+)
 from .forge_copilot_runtime import (
     CopilotGenerationError,
     CopilotGenerationResult,
@@ -71,6 +87,82 @@ from .forge_copilot_runtime import (
 
 COMMAND = "forge"
 LOG = logging.getLogger("fluid.cli.forge")
+
+
+def _infer_template_from_text(text: str) -> Optional[str]:
+    """Infer the closest template from free-form text."""
+    normalized_text = _canonicalize_use_case_text(text)
+    if not normalized_text:
+        return None
+    if (
+        "machine learning" in normalized_text
+        or "feature engineering" in normalized_text
+        or "feature store" in normalized_text
+        or "model" in normalized_text
+        or re.search(r"\bml\b", normalized_text)
+    ):
+        return "ml_pipeline"
+    if any(token in normalized_text for token in ("streaming", "real time", "realtime", "kafka", "event")):
+        return "streaming"
+    if any(
+        token in normalized_text
+        for token in (
+            "etl",
+            "ingest",
+            "cdc",
+            "multi source",
+            "sync",
+            "pipeline",
+            "data lake",
+            "data platform",
+            "lakehouse",
+        )
+    ):
+        return "etl_pipeline"
+    if any(
+        token in normalized_text
+        for token in ("analytics", "report", "dashboard", "visualization", "business intelligence")
+    ) or re.search(r"\bbi\b", normalized_text):
+        return "analytics"
+    return None
+
+
+def recommend_template_for_use_case(context: Dict[str, Any]) -> str:
+    """Choose the best template for the normalized use case and context."""
+    use_case_raw = _clean_text(context.get("use_case"))
+    use_case_other = _clean_text(context.get("use_case_other"))
+    has_use_case_input = bool(use_case_raw or use_case_other)
+    canonical = normalize_use_case(use_case_raw)
+    if not has_use_case_input:
+        canonical = "analytics"
+
+    if canonical == "analytics":
+        return "analytics"
+    if canonical == "etl_pipeline":
+        return "etl_pipeline"
+    if canonical == "streaming":
+        return "streaming"
+    if canonical == "ml_pipeline":
+        return "ml_pipeline"
+    if canonical == "data_platform":
+        return "etl_pipeline"
+
+    inference_text = " ".join(
+        part
+        for part in (
+            use_case_raw,
+            use_case_other,
+            _clean_text(context.get("project_goal")),
+            _clean_text(context.get("data_sources")),
+        )
+        if part
+    )
+    inferred = _infer_template_from_text(inference_text)
+    if canonical == "other":
+        return inferred or "starter"
+    if inferred:
+        return inferred
+    return "starter" if has_use_case_input else "analytics"
 
 
 # Custom Exceptions for better error handling
@@ -139,7 +231,7 @@ class AIAgent:
         self.domain = domain
         self.console = Console() if RICH_AVAILABLE else None
 
-    async def create_project(self, target_dir: Path, context: Dict[str, Any]) -> bool:
+    def create_project(self, target_dir: Path, context: Dict[str, Any]) -> bool:
         """Create project using AI agent"""
         raise NotImplementedError
 
@@ -180,7 +272,12 @@ class CopilotAgent(AIAgent):
                 "key": "use_case",
                 "question": "What's your primary use case?",
                 "type": "choice",
-                "choices": ["analytics", "ml_pipeline", "data_lake", "real_time", "reporting"],
+                "choices": USE_CASE_CHOICES,
+                "follow_up": {
+                    "trigger_value": "other",
+                    "key": "use_case_other",
+                    "question": "Tell me more about your use case (e.g., 'customer 360', 'CDC sync', 'executive scorecards')",
+                },
                 "required": True,
             },
             {
@@ -201,7 +298,7 @@ class CopilotAgent(AIAgent):
 
     def analyze_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze requirements and provide intelligent suggestions"""
-        use_case = context.get("use_case", "analytics").lower()
+        context = normalize_copilot_context(context)
         complexity = context.get("complexity", "intermediate").lower()
         data_sources = context.get("data_sources", "").lower()
 
@@ -215,16 +312,7 @@ class CopilotAgent(AIAgent):
         }
 
         # Template selection based on use case
-        if "machine learning" in use_case or "ml" in use_case or "ml_pipeline" in use_case:
-            suggestions["recommended_template"] = "ml_pipeline"
-        elif "streaming" in use_case or "real_time" in use_case:
-            suggestions["recommended_template"] = "streaming"
-        elif "etl" in use_case or "pipeline" in use_case:
-            suggestions["recommended_template"] = "etl_pipeline"
-        elif "analytics" in use_case or "reporting" in use_case:
-            suggestions["recommended_template"] = "analytics"
-        else:
-            suggestions["recommended_template"] = "starter"  # Safe fallback
+        suggestions["recommended_template"] = recommend_template_for_use_case(context)
 
         # Provider selection based on data sources
         if "bigquery" in data_sources or "gcp" in data_sources:
@@ -265,30 +353,50 @@ class CopilotAgent(AIAgent):
 
         return suggestions
 
-    def generate_project_artifacts(
-        self, context: Dict[str, Any], copilot_options: Optional[Dict[str, Any]] = None
-    ) -> CopilotGenerationResult:
-        """Generate and validate copilot artifacts via the LLM runtime."""
+    def prepare_runtime_inputs(
+        self, copilot_options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Resolve LLM, discovery, memory, and capability inputs once per run."""
         options = SimpleNamespace(**(copilot_options or {}))
-        llm_config = resolve_llm_config(options)
+        llm_config = getattr(options, "llm_config", None) or resolve_llm_config(options)
         target_dir = getattr(options, "target_dir", None)
         target_path = Path(target_dir).expanduser() if target_dir else None
-        discovery_report = discover_local_context(
+        discovery_report = getattr(options, "discovery_report", None) or discover_local_context(
             getattr(options, "discovery_path", None),
             discover=getattr(options, "discover", True),
             workspace_root=Path.cwd(),
             logger=LOG,
         )
-        project_memory = self._load_project_memory(
-            enabled=getattr(options, "memory", True),
-            target_dir=target_path,
+        project_memory = (
+            getattr(options, "project_memory", None)
+            if hasattr(options, "project_memory")
+            else None
         )
+        if project_memory is None:
+            project_memory = self._load_project_memory(
+                enabled=getattr(options, "memory", True),
+                target_dir=target_path,
+            )
+        capability_matrix = getattr(options, "capability_matrix", None) or build_capability_matrix()
+        return {
+            "llm_config": llm_config,
+            "discovery_report": discovery_report,
+            "project_memory": project_memory,
+            "capability_matrix": capability_matrix,
+        }
+
+    def generate_project_artifacts(
+        self, context: Dict[str, Any], copilot_options: Optional[Dict[str, Any]] = None
+    ) -> CopilotGenerationResult:
+        """Generate and validate copilot artifacts via the LLM runtime."""
+        context = normalize_copilot_context(context)
+        runtime_inputs = self.prepare_runtime_inputs(copilot_options)
         return generate_copilot_artifacts(
             context,
-            llm_config=llm_config,
-            discovery_report=discovery_report,
-            project_memory=project_memory,
-            capability_matrix=build_capability_matrix(),
+            llm_config=runtime_inputs["llm_config"],
+            discovery_report=runtime_inputs["discovery_report"],
+            project_memory=runtime_inputs["project_memory"],
+            capability_matrix=runtime_inputs["capability_matrix"],
             logger=LOG,
         )
 
@@ -301,9 +409,24 @@ class CopilotAgent(AIAgent):
     ) -> bool:
         """Create a project from validated LLM-generated artifacts."""
         try:
+            context = normalize_copilot_context(context)
             options = dict(copilot_options or {})
             options.setdefault("target_dir", str(target_dir))
-            generation_result = self.generate_project_artifacts(context, options)
+            generation_result = None
+            try:
+                generation_result = self.generate_project_artifacts(context, options)
+            except CopilotGenerationError as generation_error:
+                recovered_result = self._attempt_generation_recovery(
+                    context=context,
+                    options=options,
+                    error=generation_error,
+                )
+                if recovered_result is None:
+                    raise
+                context = normalize_copilot_context(
+                    options.get("interview_state").normalized_context if options.get("interview_state") else context
+                )
+                generation_result = recovered_result
             suggestions = generation_result.suggestions
 
             # Show AI analysis to user
@@ -344,12 +467,54 @@ class CopilotAgent(AIAgent):
                 for suggestion in e.suggestions:
                     cprint(f"  • {suggestion}")
             return False
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as e:
+            LOG.exception("Project creation failed")
             if self.console:
                 self.console.print(f"[red]❌ Failed to create project: {e}[/red]")
             else:
                 console_error(f"Failed to create project: {e}")
             return False
+
+    def _attempt_generation_recovery(
+        self,
+        *,
+        context: Dict[str, Any],
+        options: Dict[str, Any],
+        error: CopilotGenerationError,
+    ) -> Optional[CopilotGenerationResult]:
+        """Allow one extra clarification round when failure looks ambiguity-driven."""
+        interview_state = options.get("interview_state")
+        if (
+            not interview_state
+            or options.get("non_interactive")
+            or error.context.get("failure_class") != "ambiguous_intent"
+            or options.get("clarification_recovery_used")
+        ):
+            return None
+
+        runtime_inputs = self.prepare_runtime_inputs(options)
+        if self.console:
+            self.console.print(
+                Panel(
+                    "Forge needs one more clarification pass to tighten the semantic intent for a valid 0.7.2 contract.",
+                    title="🧭 One More Question Round",
+                    border_style="yellow",
+                )
+            )
+        updated_state = run_post_generation_clarification(
+            interview_state,
+            console=self.console,
+            llm_config=runtime_inputs["llm_config"],
+            discovery_report=runtime_inputs["discovery_report"],
+            capability_matrix=runtime_inputs["capability_matrix"],
+            project_memory=runtime_inputs["project_memory"],
+            failure_summary=error.context.get("attempt_summaries") or error.suggestions,
+        )
+        options["interview_state"] = updated_state
+        options["clarification_recovery_used"] = True
+        updated_context = updated_state.finalize()
+        updated_context = normalize_copilot_context(updated_context)
+        return self.generate_project_artifacts(updated_context, options)
 
     def _create_forge_config(
         self,
@@ -382,7 +547,7 @@ class CopilotAgent(AIAgent):
         }
 
         if generation_result:
-            config["fluid_version"] = generation_result.contract.get("fluidVersion", "0.7.1")
+            config["fluid_version"] = generation_result.contract.get("fluidVersion", "0.7.2")
             config["copilot_generated_contract"] = generation_result.contract
             config["copilot_generated_readme"] = generation_result.readme_markdown
             if generation_result.additional_files:
@@ -559,10 +724,14 @@ class CopilotAgent(AIAgent):
         try:
             if self.console and RICH_AVAILABLE:
                 preview = "\n".join(self._build_memory_save_preview_lines(memory))
-                self.console.print(
-                    Panel(preview, title="🧠 Save Project Memory?", border_style="cyan")
+                return ask_confirmation(
+                    self.console,
+                    prompt,
+                    default=False,
+                    title="🧠 Save Project Memory?",
+                    preview=preview,
+                    border_style="cyan",
                 )
-                return Confirm.ask(prompt, default=False, console=self.console)
             for line in self._build_memory_save_preview_lines(memory):
                 cprint(line)
             answer = input(f"{prompt} [y/N]: ").strip().lower()
@@ -618,21 +787,33 @@ class CopilotAgent(AIAgent):
 
     def _analyze_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze user requirements and generate suggestions"""
+        context = normalize_copilot_context(context)
         goal = context.get("project_goal", "").lower()
         data_sources = context.get("data_sources", "").lower()
-        context.get("use_case", "analytics")
         complexity = context.get("complexity", "intermediate")
 
         suggestions = {
-            "recommended_template": "analytics",
+            "recommended_template": recommend_template_for_use_case(context),
             "recommended_provider": "local",
             "recommended_patterns": [],
             "architecture_suggestions": [],
             "best_practices": [],
         }
 
-        # Analyze goal keywords
-        if any(word in goal for word in ["ml", "machine learning", "model", "prediction"]):
+        # Analyze normalized use case first, then fall back to goal keywords.
+        normalized_use_case = normalize_use_case(context.get("use_case"))
+        if normalized_use_case == "ml_pipeline":
+            suggestions["recommended_patterns"].append("feature_store")
+            suggestions["architecture_suggestions"].append("Consider MLflow for model versioning")
+        elif normalized_use_case == "analytics":
+            suggestions["recommended_patterns"].append("dimensional_modeling")
+            suggestions["architecture_suggestions"].append(
+                "Use layered architecture (bronze/silver/gold)"
+            )
+        elif normalized_use_case == "streaming":
+            suggestions["recommended_patterns"].append("event_sourcing")
+            suggestions["architecture_suggestions"].append("Consider Apache Kafka for streaming")
+        elif any(word in goal for word in ["ml", "machine learning", "model", "prediction"]):
             suggestions["recommended_template"] = "ml_pipeline"
             suggestions["recommended_patterns"].append("feature_store")
             suggestions["architecture_suggestions"].append("Consider MLflow for model versioning")
@@ -681,7 +862,7 @@ class CopilotAgent(AIAgent):
         analysis_text = f"""
 🎯 **Project Goal:** {context.get('project_goal', 'Not specified')}
 📊 **Data Sources:** {context.get('data_sources', 'Not specified')}
-🏗️ **Use Case:** {context.get('use_case', 'analytics')}
+🏗️ **Use Case:** {format_use_case_label(context.get('use_case', 'analytics'), context.get('use_case_other'))}
 ⚙️ **Complexity:** {context.get('complexity', 'intermediate')}
 
 🤖 **AI Recommendations:**
@@ -699,6 +880,12 @@ class CopilotAgent(AIAgent):
             analysis_text += "\n✨ **Best Practices:**\n"
             for practice in suggestions["best_practices"]:
                 analysis_text += f"• {practice}\n"
+
+        assumptions = list(context.get("assumptions_used") or [])
+        if assumptions:
+            analysis_text += "\n📝 **Assumptions Used:**\n"
+            for item in assumptions[:4]:
+                analysis_text += f"• {item}\n"
 
         memory_lines = self._build_memory_guidance_lines(generation_result)
         if memory_lines:
@@ -789,7 +976,7 @@ class CopilotAgent(AIAgent):
     ) -> str:
         """Generate intelligent contract based on AI analysis"""
         goal = context.get("project_goal", "Data Product")
-        use_case = context.get("use_case", "analytics")
+        use_case = format_use_case_label(context.get("use_case", "analytics"), context.get("use_case_other"))
         provider = suggestions["recommended_provider"]
 
         # Basic contract structure
@@ -802,7 +989,7 @@ meta:
   version: "1.0.0"
   description: "{goal}"
   owner: data-team
-  domain: {use_case}
+  domain: {json.dumps(use_case)}
   
 sources:
   - name: raw_data
@@ -926,7 +1113,10 @@ clean:
     ) -> str:
         """Generate intelligent README with AI insights"""
         goal = context.get("project_goal", "Data Product")
-        use_case = context.get("use_case", "analytics")
+        use_case = format_use_case_label(
+            context.get("use_case", "analytics"),
+            context.get("use_case_other"),
+        )
 
         readme = f"""# {goal}
 
@@ -1018,12 +1208,12 @@ For more advanced features, explore:
 3. Configure your {suggestions['recommended_provider']} provider credentials
 
 🚀 **Recommended Workflow:**
-1. `make validate` - Validate your contract
-2. `make plan` - Generate execution plan  
-3. `make apply` - Deploy your data product
+1. `fluid validate contract.fluid.yaml` - Validate your contract
+2. `fluid plan contract.fluid.yaml --out runtime/plan.json` - Generate execution plan
+3. `fluid apply runtime/plan.json` - Deploy your data product
 
 💡 **Pro Tips:**
-• Use `fluid market search` to discover similar data products
+• Use `fluid market --search "<keyword>"` to discover similar data products
 • Run `fluid doctor` if you encounter any issues
 • Check `fluid auth status` for provider authentication
 • Use `fluid forge --show-memory` to inspect saved copilot conventions
@@ -1375,62 +1565,92 @@ def run_ai_copilot_mode(args, logger: logging.Logger) -> int:
 
         # Gather context
         context = {}
+        copilot_options = {
+            "llm_provider": get_cli_arg(args, "llm_provider"),
+            "llm_model": get_cli_arg(args, "llm_model"),
+            "llm_endpoint": get_cli_arg(args, "llm_endpoint"),
+            "discover": get_cli_arg(args, "discover", True),
+            "discovery_path": get_cli_arg(args, "discovery_path"),
+            "memory": get_cli_arg(args, "memory", True),
+            "save_memory": get_cli_arg(args, "save_memory", False),
+            "non_interactive": get_cli_arg(args, "non_interactive", False),
+        }
 
         # Load additional context if provided
-        if args.context:
+        context_arg = get_cli_arg(args, "context")
+        if context_arg:
             try:
-                loaded_context = load_context(args.context, console)
+                loaded_context = load_context(context_arg, console)
                 context.update(loaded_context)
                 if console:
-                    console.print("[green]✓[/green] Loaded context successfully\n")
+                    print_dialog_status(console, status="success", message="Loaded extra context.")
             except ContextValidationError as e:
                 if console:
-                    console.print(f"[red]✗[/red] Context validation failed: {e}\n")
-                    console.print("[dim]Continuing without context file...[/dim]\n")
+                    print_dialog_status(
+                        console,
+                        status="error",
+                        message=f"Couldn't use the context file: {e}",
+                        detail="Continuing without it for now.",
+                    )
                 else:
                     logger.warning(f"Context validation failed: {e}")
 
+        if get_cli_arg(args, "provider"):
+            context["provider"] = get_cli_arg(args, "provider")
+        if get_cli_arg(args, "template"):
+            context["template"] = get_cli_arg(args, "template")
+        if get_cli_arg(args, "domain") and "domain" not in context:
+            context["domain"] = get_cli_arg(args, "domain")
+        explicit_target_dir = get_cli_arg(args, "target_dir")
+        if explicit_target_dir:
+            copilot_options["target_dir"] = str(Path(explicit_target_dir).expanduser())
+
         # Interactive questioning if not in non-interactive mode
-        if not args.non_interactive:
-            context.update(gather_copilot_context(copilot, console))
+        if not get_cli_arg(args, "non_interactive", False):
+            runtime_inputs = copilot.prepare_runtime_inputs(copilot_options)
+            copilot_options.update(runtime_inputs)
+            interview_state = run_adaptive_copilot_interview(
+                initial_context=context,
+                console=console,
+                llm_config=runtime_inputs["llm_config"],
+                discovery_report=runtime_inputs["discovery_report"],
+                capability_matrix=runtime_inputs["capability_matrix"],
+                project_memory=runtime_inputs["project_memory"],
+            )
+            copilot_options["interview_state"] = interview_state
+            context = interview_state.finalize()
+            assumptions = list(context.get("assumptions_used") or [])
+            if console and assumptions:
+                assumption_lines = "\n".join(f"• {item}" for item in assumptions[:4])
+                console.print(
+                    Panel(
+                        assumption_lines,
+                        title="📝 Assumptions Used",
+                        border_style="cyan",
+                    )
+                )
         else:
             # Use defaults for non-interactive mode
-            context.update(
-                {
+            for key, value in {
                 "project_goal": "Data Analytics Platform",
                 "data_sources": "Database tables",
                 "use_case": "analytics",
                 "complexity": "intermediate",
-                }
-            )
+            }.items():
+                context.setdefault(key, value)
+            context["interview_summary"] = build_interview_summary_from_context(context)
+        context = normalize_copilot_context(context)
 
-        if args.provider:
-            context["provider"] = args.provider
-        if args.template:
-            context["template"] = args.template
-        if args.domain and "domain" not in context:
-            context["domain"] = args.domain
-
-        # Determine target directory
         project_name = context.get("project_goal", "my-data-product").lower().replace(" ", "-")
         target_dir = get_target_directory(args, project_name)
+        copilot_options["target_dir"] = str(target_dir)
 
         # Create project with AI assistance
         success = copilot.create_project(
             target_dir,
             context,
-            {
-                "llm_provider": args.llm_provider,
-                "llm_model": args.llm_model,
-                "llm_endpoint": args.llm_endpoint,
-                "discover": args.discover,
-                "discovery_path": args.discovery_path,
-                "memory": args.memory,
-                "save_memory": args.save_memory,
-                "non_interactive": args.non_interactive,
-                "target_dir": str(target_dir),
-            },
-            dry_run=bool(getattr(args, "dry_run", False)),
+            copilot_options,
+            dry_run=bool(get_cli_arg(args, "dry_run", False)),
         )
 
         return 0 if success else 1
@@ -1464,12 +1684,20 @@ def run_domain_agent_mode(args, logger: logging.Logger) -> int:
                     table.add_row(name, agent_instance.domain, agent_instance.description)
 
                 console.print(table)
-
-                from rich.prompt import Prompt
-
-                agent_name = Prompt.ask(
-                    "\nSelect an agent", choices=list(AI_AGENTS.keys()), default="copilot"
+                selection = ask_dialog_question(
+                    console,
+                    InterviewQuestion(
+                        id="agent",
+                        field="agent",
+                        prompt="Which agent would you like to use?",
+                        type="choice",
+                        choices=[{"label": name, "value": name} for name in AI_AGENTS.keys()],
+                        required=False,
+                        allow_skip=True,
+                        default="copilot",
+                    ),
                 )
+                agent_name = selection.value or "copilot"
             else:
                 agent_name = "copilot"  # Default fallback
 
@@ -1500,13 +1728,21 @@ def run_domain_agent_mode(args, logger: logging.Logger) -> int:
                 if is_valid:
                     context.update(loaded_context)
                     if console:
-                        console.print("[green]✓[/green] Loaded context successfully\n")
+                        print_dialog_status(console, status="success", message="Loaded extra context.")
                 else:
                     if console:
-                        console.print(f"[yellow]⚠[/yellow] Context validation warning: {error}\n")
+                        print_dialog_status(
+                            console,
+                            status="warning",
+                            message=f"Context loaded with a warning: {error}",
+                        )
             except ContextValidationError as e:
                 if console:
-                    console.print(f"[red]✗[/red] Context validation failed: {e}\n")
+                    print_dialog_status(
+                        console,
+                        status="error",
+                        message=f"Couldn't use the context file: {e}",
+                    )
 
         # Interactive questioning if not in non-interactive mode
         if not args.non_interactive:
@@ -1673,30 +1909,83 @@ def run_template_mode(args, logger: logging.Logger) -> int:
 def gather_copilot_context(copilot: CopilotAgent, console) -> Dict[str, Any]:
     """Gather context through interactive questioning"""
     context = {}
+    dialog_transcript: List[Dict[str, Any]] = []
+    raw_answers: Dict[str, str] = {}
 
     if not console or not RICH_AVAILABLE:
         return context
 
     try:
-        from rich.prompt import Prompt
-
         questions = copilot.get_questions()
 
         for question_def in questions:
             key = question_def["key"]
-            question = question_def["question"]
-            q_type = question_def.get("type", "text")
-            required = question_def.get("required", False)
-            default = question_def.get("default")
-            choices = question_def.get("choices")
+            follow_up = question_def.get("follow_up")
+            question = InterviewQuestion.from_payload(question_def)
+            result = ask_dialog_question(console, question)
 
-            if q_type == "choice" and choices:
-                answer = Prompt.ask(question, choices=choices, default=default)
-            else:
-                answer = Prompt.ask(question, default=default)
+            if result.context_patch:
+                context.update(result.context_patch)
+            elif result.value is not None:
+                context[key] = result.value
+            if result.raw_input:
+                raw_answers[key] = result.raw_input
+            if result.raw_input or result.value is not None:
+                dialog_transcript.append(
+                    {
+                        "role": "user",
+                        "field": key,
+                        "question_id": question.id,
+                        "content": result.raw_input or str(result.value or "").strip(),
+                        "raw_input": result.raw_input,
+                        "resolved_value": result.value,
+                        "resolution_status": result.resolution_status,
+                    }
+                )
 
-            if answer or not required:
-                context[key] = answer
+            answer = context.get(key)
+            if (
+                follow_up
+                and answer
+                and answer == follow_up.get("trigger_value")
+                and follow_up.get("key")
+                and follow_up.get("question")
+                and not context.get(follow_up["key"])
+            ):
+                follow_up_result = ask_dialog_question(
+                    console,
+                    InterviewQuestion.from_payload(
+                        {
+                            "id": follow_up["key"],
+                            "field": follow_up["key"],
+                            "prompt": follow_up["question"],
+                            "type": "text",
+                            "required": False,
+                            "default": follow_up.get("default"),
+                        }
+                    ),
+                )
+                if follow_up_result.value:
+                    context[follow_up["key"]] = follow_up_result.value
+                if follow_up_result.raw_input:
+                    raw_answers[follow_up["key"]] = follow_up_result.raw_input
+                    dialog_transcript.append(
+                        {
+                            "role": "user",
+                            "field": follow_up["key"],
+                            "question_id": follow_up["key"],
+                            "content": follow_up_result.raw_input,
+                            "raw_input": follow_up_result.raw_input,
+                            "resolved_value": follow_up_result.value,
+                            "resolution_status": follow_up_result.resolution_status,
+                        }
+                    )
+
+        context = normalize_copilot_context(context)
+        if dialog_transcript:
+            context["dialog_transcript"] = dialog_transcript
+        if raw_answers:
+            context["raw_answers"] = raw_answers
 
     except Exception:
         # Fallback to basic context if rich prompts fail
@@ -1753,9 +2042,11 @@ def run_blueprint_mode(args, logger: logging.Logger) -> int:
 
             if not args.non_interactive:
                 if console:
-                    from rich.prompt import Confirm
-
-                    if not Confirm.ask("Continue and overwrite?"):
+                    if not ask_confirmation(
+                        console,
+                        "Continue and overwrite the existing directory?",
+                        default=False,
+                    ):
                         return 1
                 else:
                     response = input("Continue and overwrite? [y/N]: ")
@@ -1772,29 +2063,31 @@ def run_blueprint_mode(args, logger: logging.Logger) -> int:
             console.print(
                 f"[dim]{blueprint.metadata.title} - {blueprint.metadata.description}[/dim]\n"
             )
+            next_steps = """
+🎯 **Immediate Next Steps:**
+1. Review and customize contract.fluid.yaml
+2. Run `fluid validate contract.fluid.yaml` to check the blueprint contract
+3. Update provider-specific configuration before planning
 
-            # Show next steps
-            console.print("[bold]Next steps:[/bold]")
-            console.print(f"  1. cd {target_dir}")
-            console.print("  2. python -m fluid_build validate contract.fluid.yaml")
-            console.print(
-                "  3. python -m fluid_build --provider gcp --project YOUR_PROJECT plan contract.fluid.yaml"
-            )
-            console.print(
-                "  4. python -m fluid_build --provider gcp --project YOUR_PROJECT apply runtime/plan.json\n"
-            )
+🚀 **Recommended Workflow:**
+1. `fluid validate contract.fluid.yaml` - Validate your contract
+2. `fluid plan contract.fluid.yaml --out runtime/plan.json` - Generate execution plan
+3. `fluid apply runtime/plan.json` - Deploy your data product
+
+💡 **Blueprint Tips:**
+• Review scaffolded environment variables and provider settings first
+• Run `fluid doctor` if your provider setup needs a quick sanity check
+
+[dim]Generated by FLUID Forge Blueprint Mode[/dim]
+            """
+            console.print(Panel(next_steps.strip(), title="🚀 What's Next?", border_style="green"))
         else:
             success(f"Blueprint project created at {target_dir}")
             cprint(f"{blueprint.metadata.title} - {blueprint.metadata.description}\n")
             cprint("Next steps:")
-            cprint(f"  1. cd {target_dir}")
-            cprint("  2. python -m fluid_build validate contract.fluid.yaml")
-            cprint(
-                "  3. python -m fluid_build --provider gcp --project YOUR_PROJECT plan contract.fluid.yaml"
-            )
-            cprint(
-                "  4. python -m fluid_build --provider gcp --project YOUR_PROJECT apply runtime/plan.json\n"
-            )
+            cprint("  1. fluid validate contract.fluid.yaml")
+            cprint("  2. fluid plan contract.fluid.yaml --out runtime/plan.json")
+            cprint("  3. fluid apply runtime/plan.json\n")
 
         return 0
 
@@ -1871,6 +2164,7 @@ def load_context(context_input: str, console: Optional[Console] = None) -> Dict[
             "project_goal",
             "data_sources",
             "use_case",
+            "use_case_other",
             "complexity",
             "team_size",
             "domain",

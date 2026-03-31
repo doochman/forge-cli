@@ -124,7 +124,7 @@ class TestGenerateIntelligentContract:
         suggestions = {"recommended_provider": "local"}
         result = agent._generate_intelligent_contract(ctx, suggestions)
         assert "price-tracker" in result
-        assert "analytics" in result
+        assert '"Analytics & BI"' in result
         assert "provider:" in result
         assert "type: local" in result
 
@@ -141,6 +141,13 @@ class TestGenerateIntelligentContract:
         result = agent._generate_intelligent_contract(ctx, suggestions)
         assert "GCP" in result or "gcp" in result
 
+    def test_contract_uses_use_case_other_instead_of_other_slug(self, agent):
+        ctx = {"project_goal": "Test", "use_case": "other", "use_case_other": "Customer 360"}
+        suggestions = {"recommended_provider": "local"}
+        result = agent._generate_intelligent_contract(ctx, suggestions)
+        assert '"Customer 360"' in result
+        assert "domain: other" not in result
+
 
 class TestGenerateIntelligentReadme:
     def test_basic_readme(self, agent):
@@ -154,7 +161,7 @@ class TestGenerateIntelligentReadme:
         }
         result = agent._generate_intelligent_readme(ctx, suggestions)
         assert "# My Project" in result
-        assert "analytics" in result
+        assert "Analytics & BI" in result
         assert "FLUID" in result
 
     def test_readme_contains_quickstart(self, agent):
@@ -173,3 +180,16 @@ class TestGenerateIntelligentReadme:
             or "getting started" in result.lower()
             or "quick" in result.lower()
         )
+
+    def test_readme_prefers_use_case_other_text(self, agent):
+        ctx = {"project_goal": "Test", "use_case": "other", "use_case_other": "CDC sync"}
+        suggestions = {
+            "recommended_template": "etl_pipeline",
+            "recommended_provider": "local",
+            "recommended_patterns": [],
+            "architecture_suggestions": [],
+            "best_practices": [],
+        }
+        result = agent._generate_intelligent_readme(ctx, suggestions)
+        assert "CDC sync" in result
+        assert "- **Use Case:** other" not in result

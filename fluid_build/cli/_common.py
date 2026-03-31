@@ -17,8 +17,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from importlib import import_module
+from pathlib import Path
 from typing import Any, Dict, Optional
+
+
+def redact_secrets(text: str) -> str:
+    """Best-effort redaction of common secret patterns in text."""
+    redacted = re.sub(r"(Bearer\s+)[^\s]+", r"\1***", text, flags=re.I)
+    redacted = re.sub(r"(x-api-key[\"']?\s*:\s*[\"'])[^\"']+", r"\1***", redacted, flags=re.I)
+    redacted = re.sub(r"(api[_-]?key[\"']?\s*[:=]\s*[\"']?)\S+", r"\1***", redacted, flags=re.I)
+    redacted = redacted.replace(str(Path.home()), "~")
+    return redacted
 
 
 class CLIError(Exception):

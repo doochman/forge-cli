@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+__all__ = [
+    "CopilotMemorySnapshot",
+    "CopilotProjectMemory",
+    "CopilotMemoryStore",
+    "build_copilot_project_memory",
+    "resolve_copilot_memory_root",
+    "summarize_copilot_memory",
+]
+
 import json
 import logging
-import re
 from collections.abc import Iterable
 from collections import Counter
 from dataclasses import dataclass, field
@@ -12,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
-from fluid_build.cli._common import resolve_provider_from_contract
+from fluid_build.cli._common import redact_secrets, resolve_provider_from_contract
 from fluid_build.config import RUN_STATE_DIR
 from fluid_build.util.contract import get_builds
 
@@ -327,9 +335,17 @@ def _coerce_memory_document(raw: Any, *, project_root: Path) -> CopilotProjectMe
         raise ValueError("memory must be a JSON object")
 
     schema_version = int(raw.get("schema_version") or 0)
-    if schema_version != MEMORY_SCHEMA_VERSION:
+    if schema_version > MEMORY_SCHEMA_VERSION:
         raise ValueError(
-            f"unsupported schema_version {schema_version}; expected {MEMORY_SCHEMA_VERSION}"
+            f"unsupported schema_version {schema_version}; expected {MEMORY_SCHEMA_VERSION}. "
+            "Upgrade fluid-build to read this memory file."
+        )
+    if schema_version < MEMORY_SCHEMA_VERSION:
+        # Future: add migration logic here (e.g. v0 -> v1 transforms).
+        # For now, reject older versions that predate the schema contract.
+        raise ValueError(
+            f"outdated schema_version {schema_version}; expected {MEMORY_SCHEMA_VERSION}. "
+            "Delete the memory file or re-run with --save-memory to regenerate."
         )
 
     profile = raw.get("project_profile")
@@ -685,9 +701,7 @@ def _clean_scalar(value: Any) -> Optional[str]:
     text = str(value).strip()
     if not text:
         return None
-    text = re.sub(r"(Bearer\s+)[^\s]+", r"\1***", text, flags=re.I)
-    text = re.sub(r"(api[_-]?key\s*[:=]\s*)\S+", r"\1***", text, flags=re.I)
-    text = text.replace(str(Path.home()), "~")
+    text = redact_secrets(text)
     return text[:200]
 
 

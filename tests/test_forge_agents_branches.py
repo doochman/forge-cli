@@ -164,7 +164,7 @@ class TestAIAgentBase:
         agent = AIAgentBase("t", "d", "dom")
         agent.console = MagicMock()
         agent._show_ai_analysis(
-            {},
+            {"project_goal": "Forecasting", "data_sources": "warehouse"},
             {
                 "recommended_template": "t",
                 "recommended_provider": "p",
@@ -172,6 +172,8 @@ class TestAIAgentBase:
             },
         )
         agent.console.print.assert_called()
+        panel = agent.console.print.call_args.args[0]
+        assert panel.title == "🧠 AI Analysis"
 
     def test_show_next_steps_no_console(self):
         agent = AIAgentBase("t", "d", "dom")
@@ -185,6 +187,12 @@ class TestAIAgentBase:
             Path("/tmp"), {}, {"recommended_provider": "gcp", "security_requirements": ["x"]}
         )
         agent.console.print.assert_called()
+        panel = agent.console.print.call_args.args[0]
+        text = str(panel.renderable)
+        assert "fluid validate contract.fluid.yaml" in text
+        assert "fluid plan contract.fluid.yaml --out runtime/plan.json" in text
+        assert "fluid apply runtime/plan.json" in text
+        assert "make validate" not in text
 
     def test_show_next_steps_healthcare(self):
         agent = AIAgentBase("t", "d", "healthcare")
@@ -210,6 +218,8 @@ class TestFinanceAgent:
         qs = agent.get_questions()
         assert len(qs) >= 3
         assert qs[0]["key"] == "product_type"
+        assert qs[0]["choices"][0]["label"] == "Risk Analytics"
+        assert qs[0]["choices"][0]["value"] == "risk_analytics"
 
     def test_analyze_risk_analytics(self):
         agent = FinanceAgent()
@@ -224,6 +234,11 @@ class TestFinanceAgent:
     def test_analyze_fraud_detection(self):
         agent = FinanceAgent()
         result = agent.analyze_requirements({"product_type": "fraud_detection"})
+        assert "ml" in result["recommended_template"]
+
+    def test_analyze_friendly_product_phrase(self):
+        agent = FinanceAgent()
+        result = agent.analyze_requirements({"product_type": "fraud analytics"})
         assert "ml" in result["recommended_template"]
 
     def test_analyze_default(self):
@@ -268,6 +283,7 @@ class TestHealthcareAgent:
     def test_get_questions(self):
         qs = HealthcareAgent().get_questions()
         assert len(qs) >= 3
+        assert qs[0]["choices"][0]["label"] == "Patient Analytics"
 
     def test_analyze_clinical_research(self):
         result = HealthcareAgent().analyze_requirements({"product_type": "clinical_research"})
@@ -294,6 +310,10 @@ class TestHealthcareAgent:
         result = HealthcareAgent().analyze_requirements({"phi_handling": "deidentified_only"})
         assert any("de-identification" in s for s in result["architecture_suggestions"])
 
+    def test_analyze_friendly_phi_phrase(self):
+        result = HealthcareAgent().analyze_requirements({"phi_handling": "de identified"})
+        assert any("de-identification" in s for s in result["architecture_suggestions"])
+
 
 # ===================== RetailAgent =====================
 
@@ -306,6 +326,7 @@ class TestRetailAgent:
     def test_get_questions(self):
         qs = RetailAgent().get_questions()
         assert len(qs) >= 3
+        assert qs[0]["choices"][0]["label"] == "Customer 360"
 
     def test_analyze_recommendation_engine(self):
         result = RetailAgent().analyze_requirements({"product_type": "recommendation_engine"})
@@ -318,6 +339,10 @@ class TestRetailAgent:
     def test_analyze_customer_360(self):
         result = RetailAgent().analyze_requirements({"product_type": "customer_360"})
         assert "customer360" in result["recommended_template"]
+
+    def test_analyze_friendly_scale_phrase(self):
+        result = RetailAgent().analyze_requirements({"scale": "enterprise scale"})
+        assert result["recommended_provider"] == "gcp"
 
     def test_analyze_default(self):
         result = RetailAgent().analyze_requirements({"product_type": "price_optimization"})

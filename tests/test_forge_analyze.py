@@ -40,6 +40,14 @@ class TestAnalyzeRequirements:
         result = agent.analyze_requirements({"use_case": "reporting"})
         assert result["recommended_template"] == "analytics"
 
+    def test_data_platform_use_case(self, agent):
+        result = agent.analyze_requirements({"use_case": "data_platform"})
+        assert result["recommended_template"] == "etl_pipeline"
+
+    def test_data_lake_legacy_alias(self, agent):
+        result = agent.analyze_requirements({"use_case": "data_lake"})
+        assert result["recommended_template"] == "etl_pipeline"
+
     def test_ml_pipeline(self, agent):
         result = agent.analyze_requirements({"use_case": "ml_pipeline"})
         assert result["recommended_template"] == "ml_pipeline"
@@ -49,7 +57,7 @@ class TestAnalyzeRequirements:
         assert result["recommended_template"] == "ml_pipeline"
 
     def test_streaming(self, agent):
-        result = agent.analyze_requirements({"use_case": "real_time"})
+        result = agent.analyze_requirements({"use_case": "streaming"})
         assert result["recommended_template"] == "streaming"
 
     def test_etl(self, agent):
@@ -63,6 +71,15 @@ class TestAnalyzeRequirements:
     def test_unknown_use_case(self, agent):
         result = agent.analyze_requirements({"use_case": "something_else"})
         assert result["recommended_template"] == "starter"
+
+    def test_other_use_case_uses_follow_up_text(self, agent):
+        result = agent.analyze_requirements(
+            {
+                "use_case": "other",
+                "use_case_other": "CDC sync for warehouse loads",
+            }
+        )
+        assert result["recommended_template"] == "etl_pipeline"
 
     def test_default_use_case(self, agent):
         result = agent.analyze_requirements({})

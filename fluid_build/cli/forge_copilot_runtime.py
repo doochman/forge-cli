@@ -1,54 +1,62 @@
-"""Runtime support for LLM-backed forge copilot generation."""
+"""Runtime support for LLM-backed forge copilot generation.
+
+This module is the **orchestration layer** for the copilot flow.  Low-level
+concerns live in dedicated sub-modules:
+
+* ``forge_copilot_llm_providers`` – LLM provider adapters, config resolution,
+  and the ``call_llm`` function.
+* ``forge_copilot_discovery`` – Local workspace scanning (``DiscoveryReport``).
+* ``forge_copilot_schema_inference`` – CSV / JSON / Parquet / Avro type inference.
+
+All public names from those modules are **re-exported** here so existing
+``from forge_copilot_runtime import …`` statements keep working.
+"""
 
 from __future__ import annotations
 
-import csv
 import json
 import logging
-import os
 import re
-from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-import httpx
 import yaml
 
-from fluid_build.cli._common import CLIError, resolve_provider_from_contract
+from fluid_build.cli._common import redact_secrets, resolve_provider_from_contract
 from fluid_build.cli.forge_copilot_memory import CopilotMemorySnapshot
-from fluid_build.config import RUN_STATE_DIR
+from fluid_build.cli.forge_copilot_taxonomy import format_use_case_label, normalize_use_case
 from fluid_build.schema_manager import FluidSchemaManager
 from fluid_build.util.contract import get_builds
 
+# Re-export: LLM providers  ------------------------------------------------
+from fluid_build.cli.forge_copilot_llm_providers import (  # noqa: F401  – re-exports
+    AnthropicProvider,
+    BUILTIN_LLM_PROVIDERS,
+    CopilotGenerationError,
+    GeminiProvider,
+    LlmConfig,
+    LlmProvider,
+    OllamaProvider,
+    OpenAIProvider,
+    call_llm,
+    get_llm_provider,
+    resolve_llm_config,
+)
+
+# Re-export: Discovery  -----------------------------------------------------
+from fluid_build.cli.forge_copilot_discovery import (  # noqa: F401  – re-exports
+    DiscoveryReport,
+    discover_local_context,
+)
+
+# Schema inference (only import what this module actually uses)
+from fluid_build.cli.forge_copilot_schema_inference import (
+    map_inferred_type_to_contract_type as _map_inferred_type_to_contract_type,
+)
+
 LOG = logging.getLogger("fluid.cli.forge_copilot")
-
-MAX_DISCOVERY_FILES = 300
-MAX_SQL_FILES = 25
-MAX_READMES = 10
-MAX_SAMPLE_FILES = 12
-MAX_EXISTING_CONTRACTS = 12
-MAX_SAMPLE_ROWS = 20
-MAX_README_LINES = 80
-DISCOVERABLE_SAMPLE_SUFFIXES = {".csv", ".json", ".jsonl", ".parquet", ".pq", ".avro"}
-RUN_STATE_PATH_PARTS = tuple(Path(RUN_STATE_DIR).parts)
-
-IGNORED_DIRECTORIES = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "venv",
-    "node_modules",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    "dist",
-    "build",
-    "target",
-}
 
 SAFE_ADDITIONAL_FILE_EXTENSIONS = {
     ".py",
@@ -62,65 +70,10 @@ SAFE_ADDITIONAL_FILE_EXTENSIONS = {
 }
 
 
-class CopilotGenerationError(CLIError):
-    """Structured error for copilot generation failures."""
-
-    def __init__(self, event: str, message: str, suggestions: Optional[List[str]] = None):
-        super().__init__(1, event, {"message": message})
-        self.message = message
-        self.suggestions = suggestions or []
+# CopilotGenerationError and LlmConfig are imported from forge_copilot_llm_providers above.
 
 
-@dataclass
-class LlmConfig:
-    """Resolved configuration for a provider-backed LLM call."""
-
-    provider: str
-    model: str
-    endpoint: str
-    api_key: Optional[str]
-    timeout_seconds: int = 120
-
-    @property
-    def redacted_endpoint(self) -> str:
-        endpoint = self.endpoint
-        endpoint = re.sub(r"([?&](?:key|token|api_key)=)[^&]+", r"\1***", endpoint, flags=re.I)
-        return endpoint
-
-
-@dataclass
-class DiscoveryReport:
-    """Metadata-only view of locally discovered assets."""
-
-    workspace_roots: List[str]
-    files_scanned: int = 0
-    detected_sources: List[Dict[str, Any]] = field(default_factory=list)
-    sql_files: List[Dict[str, Any]] = field(default_factory=list)
-    dbt_projects: List[Dict[str, Any]] = field(default_factory=list)
-    terraform_projects: List[Dict[str, Any]] = field(default_factory=list)
-    readmes: List[Dict[str, Any]] = field(default_factory=list)
-    existing_contracts: List[Dict[str, Any]] = field(default_factory=list)
-    sample_files: List[Dict[str, Any]] = field(default_factory=list)
-    provider_hints: List[str] = field(default_factory=list)
-    build_constraints: List[str] = field(default_factory=list)
-    discovery_warnings: List[str] = field(default_factory=list)
-
-    def to_prompt_payload(self) -> Dict[str, Any]:
-        """Return a metadata-only payload safe to share with the LLM."""
-        return {
-            "workspace_roots": self.workspace_roots,
-            "files_scanned": self.files_scanned,
-            "detected_sources": self.detected_sources,
-            "sql_files": self.sql_files,
-            "dbt_projects": self.dbt_projects,
-            "terraform_projects": self.terraform_projects,
-            "readmes": self.readmes,
-            "existing_contracts": self.existing_contracts,
-            "sample_files": self.sample_files,
-            "provider_hints": self.provider_hints,
-            "build_constraints": self.build_constraints,
-            "discovery_warnings": self.discovery_warnings,
-        }
+# DiscoveryReport is imported from forge_copilot_discovery above.
 
 
 @dataclass
@@ -161,140 +114,9 @@ class CopilotGenerationResult:
     project_memory: Optional[CopilotMemorySnapshot] = None
 
 
-class LlmProvider(ABC):
-    """Interface for provider-specific request/response translation."""
+# LlmProvider and all concrete implementations are imported from
+# forge_copilot_llm_providers above.
 
-    name: str
-    default_model: str
-
-    @abstractmethod
-    def default_endpoint(self, model: str, env: Mapping[str, str]) -> str:
-        """Return the provider's default endpoint for the resolved model."""
-
-    @abstractmethod
-    def build_request(
-        self, config: LlmConfig, system_prompt: str, user_prompt: str
-    ) -> tuple[Dict[str, str], Dict[str, Any]]:
-        """Build request headers and JSON payload."""
-
-    @abstractmethod
-    def extract_text(self, response_json: Dict[str, Any]) -> str:
-        """Extract free-form response text from the provider response."""
-
-
-class OpenAIProvider(LlmProvider):
-    name = "openai"
-    default_model = "gpt-4o-mini"
-
-    def default_endpoint(self, model: str, env: Mapping[str, str]) -> str:
-        return env.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
-
-    def build_request(
-        self, config: LlmConfig, system_prompt: str, user_prompt: str
-    ) -> tuple[Dict[str, str], Dict[str, Any]]:
-        headers = {"Content-Type": "application/json"}
-        if config.api_key:
-            headers["Authorization"] = f"Bearer {config.api_key}"
-        payload = {
-            "model": config.model,
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        return headers, payload
-
-    def extract_text(self, response_json: Dict[str, Any]) -> str:
-        return response_json["choices"][0]["message"]["content"]
-
-
-class OllamaProvider(OpenAIProvider):
-    name = "ollama"
-    default_model = "llama3.1"
-
-    def default_endpoint(self, model: str, env: Mapping[str, str]) -> str:
-        host = env.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
-        return host + "/v1/chat/completions"
-
-    def build_request(
-        self, config: LlmConfig, system_prompt: str, user_prompt: str
-    ) -> tuple[Dict[str, str], Dict[str, Any]]:
-        headers, payload = super().build_request(config, system_prompt, user_prompt)
-        headers.pop("Authorization", None)
-        return headers, payload
-
-
-class AnthropicProvider(LlmProvider):
-    name = "anthropic"
-    default_model = "claude-3-5-sonnet-latest"
-
-    def default_endpoint(self, model: str, env: Mapping[str, str]) -> str:
-        return "https://api.anthropic.com/v1/messages"
-
-    def build_request(
-        self, config: LlmConfig, system_prompt: str, user_prompt: str
-    ) -> tuple[Dict[str, str], Dict[str, Any]]:
-        headers = {
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        }
-        if config.api_key:
-            headers["x-api-key"] = config.api_key
-        payload = {
-            "model": config.model,
-            "max_tokens": 4000,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_prompt}],
-        }
-        return headers, payload
-
-    def extract_text(self, response_json: Dict[str, Any]) -> str:
-        content = response_json.get("content") or []
-        for part in content:
-            if part.get("type") == "text":
-                return part.get("text", "")
-        raise KeyError("Anthropic response did not contain a text block")
-
-
-class GeminiProvider(LlmProvider):
-    name = "gemini"
-    default_model = "gemini-1.5-pro"
-
-    def default_endpoint(self, model: str, env: Mapping[str, str]) -> str:
-        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
-    def build_request(
-        self, config: LlmConfig, system_prompt: str, user_prompt: str
-    ) -> tuple[Dict[str, str], Dict[str, Any]]:
-        headers = {"Content-Type": "application/json"}
-        if config.api_key:
-            headers["x-goog-api-key"] = config.api_key
-        payload = {
-            "systemInstruction": {"parts": [{"text": system_prompt}]},
-            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": {"temperature": 0.2},
-        }
-        return headers, payload
-
-    def extract_text(self, response_json: Dict[str, Any]) -> str:
-        candidates = response_json.get("candidates") or []
-        for candidate in candidates:
-            content = candidate.get("content") or {}
-            for part in content.get("parts") or []:
-                text = part.get("text")
-                if text:
-                    return text
-        raise KeyError("Gemini response did not contain any text")
-
-
-BUILTIN_LLM_PROVIDERS: Dict[str, LlmProvider] = {
-    "openai": OpenAIProvider(),
-    "anthropic": AnthropicProvider(),
-    "claude": AnthropicProvider(),
-    "gemini": GeminiProvider(),
-    "ollama": OllamaProvider(),
-}
 
 TEMPLATE_ALIASES = {
     "analytics-dashboard": "analytics",
@@ -333,181 +155,6 @@ PROVIDER_ENGINE_COMPATIBILITY = {
     "aws": {"sql", "python", "dbt", "dbt-athena", "dbt-redshift", "glue"},
     "snowflake": {"sql", "python", "dbt", "dbt-snowflake"},
 }
-
-
-def get_llm_provider(name: str) -> LlmProvider:
-    """Resolve a provider adapter by name."""
-    normalized = (name or "").strip().lower()
-    provider = BUILTIN_LLM_PROVIDERS.get(normalized)
-    if not provider:
-        raise CopilotGenerationError(
-            "copilot_invalid_llm_provider",
-            f"Unsupported LLM provider '{name}'.",
-            suggestions=[
-                "Choose one of: openai, anthropic, gemini, ollama",
-                "Use --llm-provider or FLUID_LLM_PROVIDER to select a provider",
-            ],
-        )
-    return provider
-
-
-def resolve_llm_config(args: Any, environ: Optional[Mapping[str, str]] = None) -> LlmConfig:
-    """Resolve provider, model, endpoint, and API key from flags and env vars."""
-    env = dict(environ or os.environ)
-    provider_name = (
-        getattr(args, "llm_provider", None)
-        or env.get("FLUID_LLM_PROVIDER")
-        or _infer_provider_from_env(env)
-        or "openai"
-    )
-    provider = get_llm_provider(provider_name)
-    model = getattr(args, "llm_model", None) or env.get("FLUID_LLM_MODEL") or provider.default_model
-    if not model:
-        raise CopilotGenerationError(
-            "copilot_missing_llm_model",
-            "No LLM model was configured for forge copilot.",
-            suggestions=[
-                "Set FLUID_LLM_MODEL before running fluid forge --mode copilot",
-                "Or pass --llm-model on the command line",
-            ],
-        )
-
-    endpoint = getattr(args, "llm_endpoint", None) or env.get("FLUID_LLM_ENDPOINT")
-    if not endpoint:
-        endpoint = provider.default_endpoint(model, env)
-
-    api_key = _resolve_api_key(provider.name, env)
-    if provider.name != "ollama" and not api_key:
-        raise CopilotGenerationError(
-            "copilot_missing_llm_api_key",
-            f"No API key was configured for the {provider.name} copilot adapter.",
-            suggestions=[
-                "Set FLUID_LLM_API_KEY or the provider-specific API key environment variable",
-                "Examples: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY",
-                "For local models, use --llm-provider ollama and optionally --llm-endpoint",
-            ],
-        )
-
-    return LlmConfig(provider=provider.name, model=model, endpoint=endpoint, api_key=api_key)
-
-
-def discover_local_context(
-    discovery_path: Optional[str],
-    *,
-    discover: bool = True,
-    workspace_root: Optional[Path] = None,
-    logger: Optional[logging.Logger] = None,
-) -> DiscoveryReport:
-    """Scan local workspace files and return a metadata-only discovery report."""
-    root = (workspace_root or Path.cwd()).resolve()
-    roots = [root]
-    if discovery_path:
-        extra = Path(discovery_path).expanduser().resolve()
-        if not extra.exists():
-            raise CopilotGenerationError(
-                "copilot_discovery_path_missing",
-                f"Discovery path does not exist: {extra}",
-                suggestions=["Check the path passed to --discovery-path"],
-            )
-        if extra not in roots:
-            roots.append(extra)
-
-    report = DiscoveryReport(
-        workspace_roots=[str(path) for path in roots],
-        build_constraints=[
-            "Discovery payload must exclude raw sample rows, full file contents, and credentials.",
-            "Use only providers and templates supported by the local Forge registries.",
-            "Prefer placeholder env vars for destination configuration instead of hard-coded secrets.",
-        ],
-    )
-
-    if not discover:
-        report.build_constraints.append("Discovery was disabled by the user.")
-        return report
-
-    seen_files: set[Path] = set()
-    provider_counts: Counter[str] = Counter()
-    detected_sources: List[Dict[str, Any]] = []
-
-    for scan_root in roots:
-        for path in _iter_candidate_files(scan_root):
-            if path in seen_files:
-                continue
-            if _is_excluded_discovery_artifact(path):
-                continue
-            seen_files.add(path)
-            report.files_scanned += 1
-            suffix = path.suffix.lower()
-
-            if path.name == "dbt_project.yml":
-                project = _summarize_dbt_project(path)
-                report.dbt_projects.append(project)
-                provider_counts.update(project.get("provider_hints") or [])
-                continue
-
-            if suffix == ".tf":
-                terraform = _summarize_terraform_file(path)
-                report.terraform_projects.append(terraform)
-                provider_counts.update(terraform.get("provider_hints") or [])
-                continue
-
-            if path.name.lower().startswith("readme") and len(report.readmes) < MAX_READMES:
-                report.readmes.append(_summarize_readme(path))
-                continue
-
-            if path.name.endswith("contract.fluid.yaml") or path.name.endswith("contract.fluid.json"):
-                if len(report.existing_contracts) < MAX_EXISTING_CONTRACTS:
-                    summary = _summarize_existing_contract(path)
-                    report.existing_contracts.append(summary)
-                    provider_counts.update(summary.get("providers") or [])
-                continue
-
-            if suffix == ".sql" and len(report.sql_files) < MAX_SQL_FILES:
-                report.sql_files.append(_summarize_sql_file(path))
-                continue
-
-            if suffix in DISCOVERABLE_SAMPLE_SUFFIXES and len(report.sample_files) < MAX_SAMPLE_FILES:
-                sample = _summarize_sample_file(path)
-                report.sample_files.append(sample)
-                detected_sources.append(sample)
-                provider_counts.update(sample.get("provider_hints") or [])
-                report.discovery_warnings.extend(sample.get("warnings") or [])
-
-            if report.files_scanned >= MAX_DISCOVERY_FILES:
-                break
-        if report.files_scanned >= MAX_DISCOVERY_FILES:
-            break
-
-    report.detected_sources = detected_sources[:MAX_SAMPLE_FILES]
-    report.provider_hints = [name for name, _ in provider_counts.most_common()]
-
-    if report.sql_files:
-        report.build_constraints.append(
-            "Existing SQL assets were found; reuse discovered source table names and output naming conventions where possible."
-        )
-    if any(sample.get("format") == "parquet" for sample in report.sample_files):
-        report.build_constraints.append(
-            "Parquet files were discovered; prefer discovered column names, logical types, and storage conventions instead of inventing schemas."
-        )
-    if any(sample.get("format") == "avro" for sample in report.sample_files):
-        report.build_constraints.append(
-            "Avro files were discovered; preserve the discovered record shape and union/logical-type intent when generating exposes and builds."
-        )
-    if report.existing_contracts:
-        report.build_constraints.append(
-            "Existing FLUID contracts were found; stay consistent with discovered contract naming and provider conventions."
-        )
-
-    if logger:
-        logger.debug(
-            "copilot_discovery_complete",
-            extra={
-                "files_scanned": report.files_scanned,
-                "provider_hints": report.provider_hints,
-            },
-        )
-
-    return report
 
 
 def build_capability_matrix() -> Dict[str, Any]:
@@ -642,6 +289,7 @@ def generate_copilot_artifacts(
         elif report.validation_errors:
             joined = "; ".join(report.validation_errors[:4])
             attempt_summaries.append(f"Attempt {report.attempt}: validation failed - {joined}")
+    failure_class = classify_generation_failure(attempts)
     raise CopilotGenerationError(
         "copilot_generation_failed",
         "Forge copilot could not produce a valid contract after 3 attempts.",
@@ -651,6 +299,7 @@ def generate_copilot_artifacts(
             "Inspect discovery inputs for unsupported or ambiguous sources",
             *attempt_summaries[:3],
         ],
+        context={"failure_class": failure_class, "attempt_summaries": attempt_summaries[:3]},
     )
 
 
@@ -683,6 +332,7 @@ def _build_scaffold_decision(
         [
             str(context.get("project_goal", "")),
             str(context.get("use_case", "")),
+            str(context.get("use_case_other", "")),
             str(context.get("data_sources", "")),
             " ".join(discovery_report.provider_hints),
         ]
@@ -759,7 +409,20 @@ def _build_scaffold_decision(
         template = "streaming"
         template_source = "heuristic_context"
         template_reason = "Using the current run context because it looks like a streaming workload."
-    elif any(token in text for token in ("etl", "ingest", "cdc", "multi-source", "sync")):
+    elif any(
+        token in text
+        for token in (
+            "etl",
+            "ingest",
+            "cdc",
+            "multi-source",
+            "sync",
+            "data_platform",
+            "data platform",
+            "data lake",
+            "lakehouse",
+        )
+    ):
         template = "etl_pipeline"
         template_source = "heuristic_context"
         template_reason = "Using the current run context because it looks like an ingestion or ETL workload."
@@ -792,6 +455,189 @@ def _build_scaffold_decision(
     )
 
 
+def _normalize_interview_summary(context: Mapping[str, Any]) -> Dict[str, Any]:
+    summary = context.get("interview_summary")
+    if isinstance(summary, Mapping):
+        normalized = dict(summary)
+    else:
+        normalized = {
+            "project_goal": context.get("project_goal"),
+            "use_case": normalize_use_case(context.get("use_case")),
+            "use_case_other": context.get("use_case_other"),
+            "use_case_label": format_use_case_label(
+                context.get("use_case"), context.get("use_case_other")
+            ),
+            "data_sources": context.get("data_sources"),
+            "provider_hint": context.get("provider") or context.get("provider_hint"),
+            "domain": context.get("domain"),
+            "owner_team": context.get("owner_team") or context.get("owner"),
+            "build_engine": context.get("build_engine"),
+            "output_kind": context.get("output_kind"),
+            "semantic_intent": {
+                "primary_entity": context.get("primary_entity"),
+                "primary_measures": _coerce_string_list(context.get("primary_measures")),
+                "primary_dimensions": _coerce_string_list(context.get("primary_dimensions")),
+                "time_dimension": context.get("time_dimension"),
+                "time_granularity": context.get("time_granularity"),
+            },
+            "refresh_cadence": context.get("refresh_cadence"),
+            "consumes": context.get("consumes") or [],
+            "assumptions": list(context.get("assumptions_used") or []),
+            "answered_fields": sorted(
+                key
+                for key in (
+                    "project_goal",
+                    "use_case",
+                    "data_sources",
+                    "provider",
+                    "domain",
+                    "owner_team",
+                    "build_engine",
+                    "output_kind",
+                    "primary_entity",
+                    "primary_measures",
+                    "primary_dimensions",
+                    "time_dimension",
+                    "time_granularity",
+                    "refresh_cadence",
+                    "consumes",
+                )
+                if context.get(key)
+            ),
+        }
+
+    semantic_intent = normalized.get("semantic_intent")
+    if not isinstance(semantic_intent, Mapping):
+        semantic_intent = {}
+    normalized["semantic_intent"] = {
+        "primary_entity": semantic_intent.get("primary_entity") or context.get("primary_entity"),
+        "primary_measures": _coerce_string_list(
+            semantic_intent.get("primary_measures") or context.get("primary_measures")
+        ),
+        "primary_dimensions": _coerce_string_list(
+            semantic_intent.get("primary_dimensions") or context.get("primary_dimensions")
+        ),
+        "time_dimension": semantic_intent.get("time_dimension") or context.get("time_dimension"),
+        "time_granularity": semantic_intent.get("time_granularity")
+        or context.get("time_granularity"),
+    }
+    normalized["use_case"] = normalize_use_case(normalized.get("use_case")) or normalized.get("use_case")
+    normalized["use_case_label"] = normalized.get("use_case_label") or format_use_case_label(
+        normalized.get("use_case"), normalized.get("use_case_other")
+    )
+    normalized["consumes"] = _normalize_consumes_for_generation(
+        normalized.get("consumes") or context.get("consumes")
+    )
+    normalized["answered_fields"] = sorted(
+        set(normalized.get("answered_fields") or [])
+        | {
+            key
+            for key in (
+                "project_goal",
+                "use_case",
+                "data_sources",
+                "provider_hint",
+                "domain",
+                "owner_team",
+                "build_engine",
+                "output_kind",
+                "refresh_cadence",
+            )
+            if normalized.get(key)
+        }
+    )
+    return normalized
+
+
+def _coerce_string_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    text = str(value or "").replace("\n", ",")
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def _normalize_consumes_for_generation(value: Any) -> List[Dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[Dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        product_id = str(item.get("productId") or item.get("product_id") or "").strip()
+        expose_id = str(item.get("exposeId") or item.get("expose_id") or "").strip()
+        if product_id and expose_id:
+            normalized.append({"productId": product_id, "exposeId": expose_id})
+    return normalized
+
+
+def _build_semantics_from_interview_summary(
+    *,
+    columns: List[Dict[str, Any]],
+    interview_summary: Mapping[str, Any],
+    expose_name: str,
+    description: str,
+) -> Dict[str, Any]:
+    semantic_intent = interview_summary.get("semantic_intent")
+    if not isinstance(semantic_intent, Mapping):
+        semantic_intent = {}
+
+    entity_name = str(semantic_intent.get("primary_entity") or columns[0]["name"]).strip()
+    measure_names = _coerce_string_list(semantic_intent.get("primary_measures"))
+    if not measure_names:
+        measure_names = [f"{entity_name}_count"]
+    dimension_names = _coerce_string_list(semantic_intent.get("primary_dimensions"))
+    time_dimension = str(semantic_intent.get("time_dimension") or "").strip()
+    time_granularity = str(semantic_intent.get("time_granularity") or "").strip()
+
+    entities = [{"name": entity_name, "type": "primary"}]
+    measures = []
+    metrics = []
+    for measure_name in measure_names:
+        normalized_measure = sanitize_name(measure_name).replace("-", "_")
+        if normalized_measure.endswith("_count"):
+            agg = "count"
+            expr = entity_name
+        else:
+            agg = "sum"
+            expr = measure_name
+        measures.append(
+            {
+                "name": normalized_measure,
+                "agg": agg,
+                "expr": expr,
+                "description": f"{measure_name} for {expose_name}.",
+            }
+        )
+        metrics.append(
+            {
+                "name": f"{normalized_measure}_metric",
+                "type": "simple",
+                "measure": normalized_measure,
+                "description": f"Metric for {measure_name}.",
+            }
+        )
+
+    dimensions = [{"name": entity_name, "type": "categorical"}]
+    for dimension_name in dimension_names:
+        normalized_dimension = sanitize_name(dimension_name).replace("-", "_")
+        if normalized_dimension != entity_name:
+            dimensions.append({"name": normalized_dimension, "type": "categorical"})
+    if time_dimension:
+        time_dimension_entry: Dict[str, Any] = {"name": time_dimension, "type": "time"}
+        if time_granularity:
+            time_dimension_entry["typeParams"] = {"timeGranularity": time_granularity}
+        dimensions.append(time_dimension_entry)
+
+    return {
+        "name": expose_name.replace("_", " ").title(),
+        "description": description or "Semantic model for the exposed data product.",
+        "entities": entities,
+        "measures": measures,
+        "dimensions": dimensions,
+        "metrics": metrics,
+    }
+
+
 def build_seed_contract(
     *,
     context: Mapping[str, Any],
@@ -800,7 +646,8 @@ def build_seed_contract(
     provider_name: str,
     project_memory: Optional[CopilotMemorySnapshot] = None,
 ) -> Dict[str, Any]:
-    """Create a minimal valid 0.7.1 contract used as guidance for the LLM."""
+    """Create a minimal valid 0.7.2 contract used as guidance for the LLM."""
+    interview_summary = _normalize_interview_summary(context)
     project_name = sanitize_name(context.get("project_goal") or "copilot-data-product")
     expose_name = f"{project_name}_output"
     columns = [{"name": "id", "type": "integer", "required": True}]
@@ -818,57 +665,76 @@ def build_seed_contract(
         if not columns:
             columns = [{"name": "id", "type": "integer", "required": True}]
 
+    build_engine = str(interview_summary.get("build_engine") or "sql").strip().lower()
+    if build_engine not in KNOWN_BUILD_ENGINES:
+        build_engine = "sql"
+    build = {
+        "id": "main_build",
+        "pattern": "embedded-logic",
+        "engine": "python" if build_engine == "python" else "sql",
+        "execution": {
+            "trigger": {"type": "manual", "iterations": 1},
+            "runtime": {
+                "platform": provider_name,
+                "resources": {"cpu": "1", "memory": "2Gi"},
+            },
+        },
+    }
+    if build["engine"] == "python":
+        build["repository"] = "src/main.py"
+        build["properties"] = {"model": "src.main:build"}
+    else:
+        build["properties"] = {"sql": "SELECT 1 AS id"}
+
+    description = context.get("project_goal") or "AI-generated FLUID data product"
+    domain = (
+        context.get("domain")
+        or interview_summary.get("domain")
+        or (project_memory.preferred_domain if project_memory else None)
+        or context.get("use_case")
+        or "analytics"
+    )
+    owner_team = (
+        interview_summary.get("owner_team")
+        or context.get("owner_team")
+        or context.get("owner")
+        or (project_memory.preferred_owner if project_memory else None)
+        or context.get("team_size")
+        or "data-team"
+    )
+    consumes = interview_summary.get("consumes") or []
+    if not isinstance(consumes, list):
+        consumes = []
+
     binding = _default_binding(provider_name, expose_name)
     return {
-        "fluidVersion": "0.7.1",
+        "fluidVersion": "0.7.2",
         "kind": "DataProduct",
         "id": f"generated.{project_name}",
         "name": project_name.replace("-", " ").title(),
-        "description": context.get("project_goal") or "AI-generated FLUID data product",
-        "domain": context.get("domain")
-        or (project_memory.preferred_domain if project_memory else None)
-        or context.get("use_case")
-        or "analytics",
+        "description": description,
+        "domain": domain,
         "metadata": {
             "layer": "Bronze",
             "owner": {
-                "team": context.get("owner")
-                or (project_memory.preferred_owner if project_memory else None)
-                or context.get("team_size")
-                or "data-team",
+                "team": owner_team,
                 "email": "data-team@example.com",
             },
-            "template": template_name,
         },
-        "consumes": [],
-        "builds": [
-            {
-                "id": "main_build",
-                "pattern": "embedded-logic",
-                "engine": "sql",
-                "properties": {"sql": "SELECT 1 AS id"},
-                "execution": {
-                    "trigger": {"type": "manual", "iterations": 1},
-                    "runtime": {
-                        "platform": provider_name,
-                        "resources": {"cpu": "1", "memory": "2Gi"},
-                    },
-                },
-            }
-        ],
+        "consumes": consumes,
+        "builds": [build],
         "exposes": [
             {
                 "exposeId": expose_name,
-                "kind": "table",
+                "kind": str(interview_summary.get("output_kind") or "table"),
                 "binding": binding,
                 "contract": {"schema": columns},
-            }
-        ],
-        "quality": [
-            {
-                "dimension": "completeness",
-                "assertion": f"{columns[0]['name']} IS NOT NULL",
-                "severity": "error",
+                "semantics": _build_semantics_from_interview_summary(
+                    columns=columns,
+                    interview_summary=interview_summary,
+                    expose_name=expose_name,
+                    description=description,
+                ),
             }
         ],
     }
@@ -876,21 +742,132 @@ def build_seed_contract(
 
 def build_system_prompt(capability_matrix: Mapping[str, Any]) -> str:
     """System prompt for structured FLUID contract generation."""
+    providers = ", ".join(capability_matrix.get("providers") or [])
+    engines = ", ".join(capability_matrix.get("build_engines") or sorted(KNOWN_BUILD_ENGINES))
     return (
-        "You are FLUID Forge Copilot. Generate a production-ready FLUID contract and README "
+        "You are FLUID Forge Copilot. Generate a production-ready FLUID 0.7.2 contract and README "
         "that only use locally supported templates, providers, and build engines.\n"
         "Return strict JSON only. Do not wrap the response in markdown fences.\n"
         "Never include secrets, access tokens, raw sample values, or verbatim file contents.\n"
-        "Use FLUID 0.7.1 unless the seed contract requires otherwise.\n"
+        "ALWAYS use fluidVersion '0.7.2' (Semantic Truth Engine release).\n"
         "Treat project_memory as a soft preference layer only. Explicit user context and the current "
         "discovery report take precedence.\n"
+        "Use interview_summary as the authoritative statement of current user intent.\n\n"
         "The JSON object must contain keys: recommended_template, recommended_provider, "
         "recommended_patterns, architecture_suggestions, best_practices, technology_stack, "
-        "description, domain, owner, readme_markdown, contract, additional_files.\n"
-        "The contract value must be a JSON object that passes FLUID validation and uses one of "
-        f"these providers: {', '.join(capability_matrix.get('providers') or [])}.\n"
+        "description, domain, owner, readme_markdown, contract, additional_files.\n\n"
+        "CRITICAL: The contract value must be a JSON object that strictly conforms to the FLUID 0.7.2 schema.\n"
+        "The ONLY allowed top-level keys in the contract object are: "
+        "fluidVersion, kind, id, name, description, domain, metadata, consumes, builds, exposes.\n"
+        "DO NOT add 'quality', 'governance', 'owner', or any other top-level key.\n\n"
+        "metadata must be an object with: owner (object with team and email) and layer.\n\n"
+        "Each build must have: id, pattern (one of: 'embedded-logic', 'hybrid-reference', 'multi-stage'), "
+        "engine (one of: " + engines + "), properties, execution.\n"
+        "For engine='sql', properties must contain 'sql' with a SQL string.\n"
+        "For engine='python', the build must have 'repository' and properties.model.\n"
+        "execution must have trigger (object with type and iterations) and runtime (object with platform and resources).\n"
+        "DO NOT add 'consumes' or 'produces' inside a build object.\n\n"
+        "Each consume must have: productId (string) and exposeId (string). No other keys.\n\n"
+        "Each expose must have: exposeId (string), kind (string), binding (object with platform, format, location), "
+        "contract (object with schema as array of column objects with name, type, required).\n"
+        "binding.platform is REQUIRED and must be one of: " + providers + ".\n"
+        "DO NOT put 'platform' inside binding.location.\n\n"
+        "NEW IN 0.7.2 — SEMANTICS BLOCK (required on each expose):\n"
+        "Each expose MUST include a 'semantics' object with the following structure:\n"
+        "- name (string): Human-readable name for this semantic model\n"
+        "- description (string): Business context for what this model represents\n"
+        "- entities (array): Join keys with type annotations. Each entity has: name (string), "
+        "type (one of: 'primary', 'foreign', 'unique', 'natural'), and optional expr and description.\n"
+        "- measures (array): Aggregatable expressions. Each measure has: name (string, required), "
+        "agg (one of: 'sum', 'avg', 'count', 'count_distinct', 'min', 'max', 'median', 'percentile', required), "
+        "and optional expr, description, createMetric (boolean).\n"
+        "- dimensions (array): Grouping axes. Each dimension has: name (string, required), "
+        "type (one of: 'categorical', 'time', required), and optional expr, description, "
+        "typeParams (object with timeGranularity for time dimensions).\n"
+        "- metrics (array): KPI definitions. Each metric has: name (string, required), "
+        "type (one of: 'simple', 'derived', 'ratio', required), "
+        "and optional measure (for simple), filter, inputMetrics (array of strings for derived/ratio), "
+        "expr (for derived), numerator/denominator (for ratio), description.\n"
+        "The semantics block enables AI agents and BI tools to generate correct queries without hallucination.\n\n"
+        "Follow the seed_contract structure exactly as a reference for the correct schema shape.\n"
+        f"Allowed providers: {providers}.\n"
         "Only use build engines from the provided capability matrix."
     )
+
+
+def build_clarification_system_prompt(capability_matrix: Mapping[str, Any]) -> str:
+    """System prompt for interview planning before contract generation."""
+    providers = ", ".join(capability_matrix.get("providers") or [])
+    templates = ", ".join(sorted((capability_matrix.get("templates") or {}).keys()))
+    return (
+        "You are FLUID Forge Copilot Interview Planner.\n"
+        "Your job is to ask the fewest high-signal questions needed to generate a strong FLUID 0.7.2 contract.\n"
+        "Return strict JSON only. Do not use markdown fences.\n"
+        "Never ask for secrets, passwords, API keys, access tokens, or raw credentials.\n"
+        "Use discovery and project memory as context, but explicit current-run user input takes precedence.\n"
+        "Ask at most 2 questions in a round. Prefer choices when the taxonomy is stable.\n"
+        "Users may answer imperfectly with partial phrases, synonyms, abbreviations, or adjacent concepts.\n"
+        "Treat transcript.raw_input as primary evidence of user intent and transcript.resolved_value as a helpful local guess.\n"
+        "If local matching is uncertain, prefer inferring from the raw wording over asking a rigid repeat question.\n"
+        "Canonical use_case values: analytics, etl_pipeline, streaming, ml_pipeline, data_platform, other.\n"
+        "Allowed providers: "
+        + providers
+        + ". Known templates: "
+        + templates
+        + ".\n"
+        "Return a JSON object with keys: status, reason, context_patch, assumptions, questions.\n"
+        "status must be either 'ask' or 'ready'.\n"
+        "questions must be an array of objects with: id, field, prompt, type, choices, required, allow_skip.\n"
+        "Supported question types are 'text' and 'choice'.\n"
+        "Use context_patch to normalize obvious values from existing evidence.\n"
+        "Use assumptions only for bounded defaults that are safe to surface to the user.\n"
+        "Mark status='ready' when enough intent is known to generate a defensible contract without more questioning."
+    )
+
+
+def build_clarification_user_prompt(
+    *,
+    interview_state: Mapping[str, Any],
+    discovery_report: DiscoveryReport,
+    capability_matrix: Mapping[str, Any],
+    project_memory: Optional[CopilotMemorySnapshot] = None,
+    previous_failure: Sequence[str] | None = None,
+) -> str:
+    """Build the adaptive interview prompt payload."""
+    payload: Dict[str, Any] = {
+        "interview_state": interview_state,
+        "discovery_report": discovery_report.to_prompt_payload(),
+        "capability_matrix": capability_matrix,
+        "target_slots": [
+            "project_goal",
+            "use_case",
+            "data_sources",
+            "provider_hint",
+            "domain",
+            "owner_team",
+            "build_engine",
+            "output_kind",
+            "primary_entity",
+            "primary_measures",
+            "primary_dimensions",
+            "time_dimension",
+            "time_granularity",
+            "refresh_cadence",
+            "consumes",
+        ],
+        "priorities": [
+            "Ask nothing if current context and discovery are already sufficient.",
+            "Prefer semantic intent questions over generic project-management questions.",
+            "If use_case is ambiguous, prefer the canonical taxonomy with an Other / Not sure option.",
+            "Assume the user may answer with fuzzy wording and use transcript raw_input plus resolved values together.",
+            "If there was a generation failure, only ask questions that directly reduce that ambiguity.",
+        ],
+    }
+    if project_memory:
+        payload["project_memory"] = project_memory.to_prompt_payload()
+    if previous_failure:
+        payload["previous_failure"] = list(previous_failure)
+    return json.dumps(payload, indent=2, sort_keys=True)
 
 
 def build_user_prompt(
@@ -907,17 +884,10 @@ def build_user_prompt(
     project_memory: Optional[CopilotMemorySnapshot] = None,
 ) -> str:
     """Build the attempt-specific user prompt."""
+    interview_summary = _normalize_interview_summary(context)
     prompt: Dict[str, Any] = {
         "attempt": attempt_index,
-        "user_context": {
-            "project_goal": context.get("project_goal"),
-            "data_sources": context.get("data_sources"),
-            "use_case": context.get("use_case"),
-            "complexity": context.get("complexity"),
-            "team_size": context.get("team_size"),
-            "domain": context.get("domain"),
-            "provider_hint": context.get("provider"),
-        },
+        "interview_summary": interview_summary,
         "capability_matrix": capability_matrix,
         "discovery_report": discovery_report.to_prompt_payload(),
         "seed_template": seed_template,
@@ -943,40 +913,42 @@ def build_user_prompt(
     return json.dumps(prompt, indent=2, sort_keys=True)
 
 
-def call_llm(
-    provider: LlmProvider,
-    config: LlmConfig,
-    system_prompt: str,
-    user_prompt: str,
-) -> str:
-    """Call the configured provider and return free-form response text."""
-    headers, payload = provider.build_request(config, system_prompt, user_prompt)
-    try:
-        with httpx.Client(timeout=config.timeout_seconds) as client:
-            response = client.post(config.endpoint, headers=headers, json=payload)
-            response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise CopilotGenerationError(
-            "copilot_llm_request_failed",
-            f"LLM request failed for provider {config.provider}: {exc}",
-            suggestions=[
-                "Check the selected model and endpoint are correct",
-                "Verify the API key environment variable is set",
-                "Use --llm-endpoint only when you need to override the provider default",
-            ],
-        ) from exc
+_AMBIGUITY_ERROR_KEYWORDS = (
+    "semantics",
+    "entity",
+    "measure",
+    "dimension",
+    "metric",
+    "business context",
+    "description",
+    "timegranularity",
+)
+_STRUCTURAL_ERROR_KEYWORDS = (
+    "unsupported provider",
+    "unsupported template",
+    "binding.platform",
+    "missing an engine",
+    "not supported for provider",
+    "must define repository",
+    "must include sql",
+    "parse error",
+)
 
-    try:
-        return provider.extract_text(response.json())
-    except Exception as exc:  # noqa: BLE001
-        raise CopilotGenerationError(
-            "copilot_llm_response_invalid",
-            f"LLM response from {config.provider} could not be parsed.",
-            suggestions=[
-                "Verify the selected model supports JSON-friendly instruction following",
-                "Try a different --llm-model or --llm-provider",
-            ],
-        ) from exc
+
+def classify_generation_failure(attempts: Sequence[GenerationAttemptReport]) -> str:
+    """Classify whether a failed run is likely due to missing business intent."""
+    combined_errors = " ".join(
+        error.lower()
+        for attempt in attempts
+        for error in ([attempt.parse_error] if attempt.parse_error else []) + attempt.validation_errors
+    )
+    if not combined_errors:
+        return "unknown"
+    if any(keyword in combined_errors for keyword in _STRUCTURAL_ERROR_KEYWORDS):
+        return "structural"
+    if any(keyword in combined_errors for keyword in _AMBIGUITY_ERROR_KEYWORDS):
+        return "ambiguous_intent"
+    return "structural"
 
 
 def normalize_generation_payload(
@@ -1025,8 +997,14 @@ def normalize_generation_payload(
         "best_practices": list(payload.get("best_practices") or []),
         "technology_stack": list(payload.get("technology_stack") or []),
         "description": payload.get("description") or contract.get("description") or "",
-        "domain": payload.get("domain") or contract.get("domain") or context.get("domain") or "",
-        "owner": payload.get("owner") or contract.get("metadata", {}).get("owner", {}).get("team"),
+        "domain": payload.get("domain")
+        or contract.get("domain")
+        or _normalize_interview_summary(context).get("domain")
+        or context.get("domain")
+        or "",
+        "owner": payload.get("owner")
+        or contract.get("metadata", {}).get("owner", {}).get("team")
+        or _normalize_interview_summary(context).get("owner_team"),
         "discovery_summary": {
             "provider_hints": discovery_report.provider_hints,
             "source_count": len(discovery_report.detected_sources),
@@ -1123,6 +1101,26 @@ def validate_generated_result(
         schema = contract_section.get("schema")
         if not schema:
             warnings.append(f"Expose '{expose.get('exposeId', 'unknown')}' does not define contract.schema.")
+        semantics = expose.get("semantics")
+        if not semantics:
+            errors.append(f"Expose '{expose.get('exposeId', 'unknown')}' is missing semantics.")
+            continue
+        if not (semantics.get("entities") or []):
+            errors.append(
+                f"Expose '{expose.get('exposeId', 'unknown')}' semantics must include at least one entity."
+            )
+        if not (semantics.get("measures") or []):
+            errors.append(
+                f"Expose '{expose.get('exposeId', 'unknown')}' semantics must include at least one measure."
+            )
+        if not (semantics.get("dimensions") or []):
+            errors.append(
+                f"Expose '{expose.get('exposeId', 'unknown')}' semantics must include at least one dimension."
+            )
+        if not (semantics.get("metrics") or []):
+            errors.append(
+                f"Expose '{expose.get('exposeId', 'unknown')}' semantics must include at least one metric."
+            )
 
     return errors, warnings
 
@@ -1175,12 +1173,17 @@ def normalize_template_name(value: Any) -> str:
 
 
 def normalize_provider_name(value: Any) -> str:
-    """Normalize provider aliases."""
+    """Normalize infrastructure provider aliases (gcp, aws, local, snowflake).
+
+    This is for cloud/infra providers used in contract bindings and scaffold
+    decisions.  For LLM provider normalization see
+    ``normalize_llm_provider_name`` in ``forge_copilot_llm_providers``.
+    """
     if value is None:
         return "local"
     normalized = str(value).strip().lower().replace("-", "_")
-    if normalized == "claude":
-        return "anthropic"
+    # "claude" / "anthropic" are LLM providers, not infra providers —
+    # pass through unchanged so callers don't silently get a wrong mapping.
     return normalized
 
 
@@ -1194,509 +1197,7 @@ def sanitize_name(value: Any) -> str:
 
 def redact_secret_like_text(text: str) -> str:
     """Best-effort redaction for common secret patterns."""
-    redacted = re.sub(r"(Bearer\s+)[^\s]+", r"\1***", text, flags=re.I)
-    redacted = re.sub(r"(x-api-key[\"']?\s*:\s*[\"'])[^\"']+", r"\1***", redacted, flags=re.I)
-    redacted = re.sub(r"(api[_-]?key[\"']?\s*[:=]\s*[\"'])[^\"']+", r"\1***", redacted, flags=re.I)
-    return redacted
-
-
-def _infer_provider_from_env(env: Mapping[str, str]) -> Optional[str]:
-    detected = []
-    if env.get("OPENAI_API_KEY"):
-        detected.append("openai")
-    if env.get("ANTHROPIC_API_KEY"):
-        detected.append("anthropic")
-    if env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY"):
-        detected.append("gemini")
-    if env.get("OLLAMA_HOST"):
-        detected.append("ollama")
-    if len(detected) == 1:
-        return detected[0]
-    return None
-
-
-def _resolve_api_key(provider: str, env: Mapping[str, str]) -> Optional[str]:
-    if env.get("FLUID_LLM_API_KEY"):
-        return env["FLUID_LLM_API_KEY"]
-    if provider == "openai":
-        return env.get("OPENAI_API_KEY")
-    if provider == "anthropic":
-        return env.get("ANTHROPIC_API_KEY")
-    if provider == "gemini":
-        return env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY")
-    return None
-
-
-def _iter_candidate_files(root: Path) -> Iterable[Path]:
-    if root.is_file():
-        yield root
-        return
-
-    if not root.is_dir():
-        return
-
-    stack = [root]
-    yielded = 0
-    while stack and yielded < MAX_DISCOVERY_FILES:
-        current = stack.pop()
-        try:
-            entries = sorted(current.iterdir(), key=lambda item: item.name)
-        except OSError:
-            continue
-        for entry in entries:
-            if entry.name in IGNORED_DIRECTORIES:
-                continue
-            if entry.is_dir():
-                stack.append(entry)
-                continue
-            yielded += 1
-            yield entry
-            if yielded >= MAX_DISCOVERY_FILES:
-                return
-
-
-def _is_run_state_artifact(path: Path) -> bool:
-    """Return True when a file lives under the repo-local runtime state directory."""
-    parts = path.parts
-    if len(parts) < len(RUN_STATE_PATH_PARTS):
-        return False
-    for index in range(len(parts) - len(RUN_STATE_PATH_PARTS) + 1):
-        if tuple(parts[index : index + len(RUN_STATE_PATH_PARTS)]) == RUN_STATE_PATH_PARTS:
-            return True
-    return False
-
-
-def _is_excluded_discovery_artifact(path: Path) -> bool:
-    """Return True when a file should be skipped by generic local discovery."""
-    if _is_run_state_artifact(path):
-        return True
-    return any(part.lower() == "airbyte" for part in path.parts)
-
-
-def _summarize_dbt_project(path: Path) -> Dict[str, Any]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    profile = data.get("profile")
-    return {
-        "path": str(path),
-        "name": data.get("name"),
-        "profile": profile,
-        "model_paths": data.get("model-paths") or [],
-        "provider_hints": _extract_provider_hints(" ".join([str(profile), str(data)])),
-    }
-
-
-def _summarize_terraform_file(path: Path) -> Dict[str, Any]:
-    content = path.read_text(encoding="utf-8", errors="ignore")
-    resource_matches = re.findall(r'resource\s+"([^"]+)"\s+"([^"]+)"', content)
-    return {
-        "path": str(path),
-        "resources": [
-            {"type": resource_type, "name": name} for resource_type, name in resource_matches[:15]
-        ],
-        "provider_hints": _extract_provider_hints(content),
-    }
-
-
-def _summarize_readme(path: Path) -> Dict[str, Any]:
-    headings: List[str] = []
-    words = 0
-    for index, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines()):
-        if index >= MAX_README_LINES:
-            break
-        if line.strip().startswith("#"):
-            headings.append(line.lstrip("#").strip())
-        words += len(line.split())
-    return {"path": str(path), "headings": headings[:12], "word_count": words}
-
-
-def _summarize_existing_contract(path: Path) -> Dict[str, Any]:
-    raw = path.read_text(encoding="utf-8")
-    if path.suffix == ".json":
-        contract = json.loads(raw)
-    else:
-        contract = yaml.safe_load(raw)
-    providers = []
-    for expose in contract.get("exposes") or []:
-        binding = expose.get("binding") or {}
-        if binding.get("platform"):
-            providers.append(binding["platform"])
-    return {
-        "path": str(path),
-        "fluid_version": contract.get("fluidVersion"),
-        "kind": contract.get("kind"),
-        "id": contract.get("id"),
-        "name": contract.get("name"),
-        "providers": sorted(set(providers)),
-        "build_ids": [build.get("id") for build in get_builds(contract)[:10] if build.get("id")],
-        "expose_ids": [
-            expose.get("exposeId")
-            for expose in (contract.get("exposes") or [])[:10]
-            if expose.get("exposeId")
-        ],
-    }
-
-
-def _summarize_sql_file(path: Path) -> Dict[str, Any]:
-    content = path.read_text(encoding="utf-8", errors="ignore")
-    table_refs = re.findall(
-        r"\b(?:from|join|into|update|table)\s+([A-Za-z0-9_.`\"]+)",
-        content,
-        flags=re.IGNORECASE,
-    )
-    return {
-        "path": str(path),
-        "line_count": len(content.splitlines()),
-        "referenced_tables": table_refs[:15],
-    }
-
-
-def _summarize_sample_file(path: Path) -> Dict[str, Any]:
-    suffix = path.suffix.lower()
-    columns: Dict[str, str] = {}
-    sampled_rows = 0
-    row_count: Optional[int] = None
-    schema_source: Optional[str] = None
-    warnings: List[str] = []
-    if suffix == ".csv":
-        with path.open(encoding="utf-8", errors="ignore", newline="") as handle:
-            reader = csv.DictReader(handle)
-            type_tracker: Dict[str, List[str]] = {}
-            for row in reader:
-                sampled_rows += 1
-                for key, value in row.items():
-                    if key is None:
-                        continue
-                    type_tracker.setdefault(key, []).append(_infer_scalar_type(value))
-                if sampled_rows >= MAX_SAMPLE_ROWS:
-                    break
-            columns = {key: _merge_types(values) for key, values in type_tracker.items()}
-    elif suffix in {".json", ".jsonl"}:
-        rows = list(_load_json_rows(path))
-        sampled_rows = len(rows)
-        type_tracker = {}
-        for row in rows:
-            if not isinstance(row, Mapping):
-                continue
-            for key, value in row.items():
-                type_tracker.setdefault(key, []).append(_infer_python_type(value))
-        columns = {key: _merge_types(values) for key, values in type_tracker.items()}
-    elif suffix in {".parquet", ".pq"}:
-        metadata = _read_parquet_metadata(path)
-        columns = metadata.get("columns") or {}
-        row_count = metadata.get("row_count")
-        schema_source = metadata.get("schema_source")
-        warnings = list(metadata.get("warnings") or [])
-    elif suffix == ".avro":
-        metadata = _read_avro_metadata(path)
-        columns = metadata.get("columns") or {}
-        row_count = metadata.get("row_count")
-        schema_source = metadata.get("schema_source")
-        warnings = list(metadata.get("warnings") or [])
-
-    summary = {
-        "path": str(path),
-        "format": suffix.lstrip("."),
-        "sampled_rows": sampled_rows,
-        "columns": columns,
-        "provider_hints": _extract_provider_hints(path.name),
-    }
-    if row_count is not None:
-        summary["row_count"] = row_count
-    if schema_source:
-        summary["schema_source"] = schema_source
-    if warnings:
-        summary["warnings"] = warnings
-    return summary
-
-
-def _read_parquet_metadata(path: Path) -> Dict[str, Any]:
-    for reader in (_read_parquet_metadata_pyarrow, _read_parquet_metadata_duckdb):
-        try:
-            metadata = reader(path)
-        except ImportError:
-            continue
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "columns": {},
-                "warnings": [f"Could not inspect Parquet schema for {path.name}: {exc}"],
-            }
-        if metadata.get("columns"):
-            return metadata
-
-    return {
-        "columns": {},
-        "warnings": [
-            f"Parquet file {path.name} was discovered but schema extraction requires pyarrow or duckdb."
-        ],
-    }
-
-
-def _read_parquet_metadata_pyarrow(path: Path) -> Dict[str, Any]:
-    import pyarrow.parquet as pq
-
-    parquet_file = pq.ParquetFile(path)
-    schema = parquet_file.schema_arrow
-    columns = {field.name: _infer_arrow_type(str(field.type)) for field in schema}
-    row_count = parquet_file.metadata.num_rows if parquet_file.metadata else None
-    return {
-        "columns": columns,
-        "row_count": row_count,
-        "schema_source": "pyarrow",
-    }
-
-
-def _read_parquet_metadata_duckdb(path: Path) -> Dict[str, Any]:
-    import duckdb
-
-    connection = duckdb.connect()
-    try:
-        rows = connection.execute(
-            "DESCRIBE SELECT * FROM read_parquet(?)",
-            [str(path)],
-        ).fetchall()
-    finally:
-        connection.close()
-    columns = {
-        str(row[0]): _infer_duckdb_type(str(row[1]))
-        for row in rows
-        if len(row) >= 2 and row[0] is not None
-    }
-    return {"columns": columns, "schema_source": "duckdb"}
-
-
-def _read_avro_metadata(path: Path) -> Dict[str, Any]:
-    for reader in (_read_avro_metadata_fastavro, _read_avro_metadata_avro):
-        try:
-            metadata = reader(path)
-        except ImportError:
-            continue
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "columns": {},
-                "warnings": [f"Could not inspect Avro schema for {path.name}: {exc}"],
-            }
-        if metadata.get("columns"):
-            return metadata
-
-    return {
-        "columns": {},
-        "warnings": [
-            f"Avro file {path.name} was discovered but schema extraction requires fastavro or avro."
-        ],
-    }
-
-
-def _read_avro_metadata_fastavro(path: Path) -> Dict[str, Any]:
-    from fastavro import reader
-
-    with path.open("rb") as handle:
-        avro_reader = reader(handle)
-        schema = avro_reader.writer_schema or {}
-    return {
-        "columns": _extract_avro_columns(schema),
-        "schema_source": "fastavro",
-        "row_count": None,
-    }
-
-
-def _read_avro_metadata_avro(path: Path) -> Dict[str, Any]:
-    from avro.datafile import DataFileReader
-    from avro.io import DatumReader
-
-    with path.open("rb") as handle:
-        reader = DataFileReader(handle, DatumReader())
-        try:
-            schema = json.loads(str(reader.datum_reader.writers_schema))
-        finally:
-            reader.close()
-    return {
-        "columns": _extract_avro_columns(schema),
-        "schema_source": "avro",
-        "row_count": None,
-    }
-
-
-def _load_json_rows(path: Path) -> Iterable[Any]:
-    content = path.read_text(encoding="utf-8", errors="ignore")
-    if path.suffix.lower() == ".jsonl":
-        for line in content.splitlines():
-            if not line.strip():
-                continue
-            yield json.loads(line)
-        return
-
-    parsed = json.loads(content)
-    if isinstance(parsed, list):
-        for item in parsed[:MAX_SAMPLE_ROWS]:
-            yield item
-        return
-    if isinstance(parsed, dict):
-        if all(isinstance(value, list) for value in parsed.values()):
-            keys = list(parsed.keys())
-            row_count = min(len(parsed[key]) for key in keys)
-            for index in range(min(row_count, MAX_SAMPLE_ROWS)):
-                yield {key: parsed[key][index] for key in keys}
-            return
-        yield parsed
-
-
-def _extract_avro_columns(schema: Mapping[str, Any]) -> Dict[str, str]:
-    fields = schema.get("fields") or []
-    columns: Dict[str, str] = {}
-    for field in fields:
-        name = field.get("name")
-        if not name:
-            continue
-        columns[str(name)] = _infer_avro_type(field.get("type"))
-    return columns
-
-
-def _infer_avro_type(type_spec: Any) -> str:
-    if isinstance(type_spec, list):
-        non_null = [candidate for candidate in type_spec if candidate != "null"]
-        if not non_null:
-            return "string"
-        return _infer_avro_type(non_null[0])
-    if isinstance(type_spec, str):
-        lowered = type_spec.lower()
-        if lowered in {"boolean"}:
-            return "boolean"
-        if lowered in {"int", "long"}:
-            return "integer"
-        if lowered in {"float", "double"}:
-            return "number"
-        if lowered in {"bytes", "string", "enum"}:
-            return "string"
-        if lowered in {"array"}:
-            return "array"
-        if lowered in {"map", "record"}:
-            return "object"
-        return "string"
-    if isinstance(type_spec, Mapping):
-        logical_type = str(type_spec.get("logicalType") or "").lower()
-        if logical_type in {"date"}:
-            return "date"
-        if logical_type in {"timestamp-millis", "timestamp-micros", "local-timestamp-millis", "local-timestamp-micros"}:
-            return "datetime"
-
-        avro_type = type_spec.get("type")
-        if avro_type == "array":
-            return "array"
-        if avro_type in {"map", "record"}:
-            return "object"
-        if avro_type == "enum":
-            return "string"
-        return _infer_avro_type(avro_type)
-    return "string"
-
-
-def _extract_provider_hints(text: str) -> List[str]:
-    lowered = text.lower()
-    hints = []
-    if any(token in lowered for token in ("gcp", "bigquery", "composer", "dataform")):
-        hints.append("gcp")
-    if any(token in lowered for token in ("aws", "s3", "redshift", "athena", "glue")):
-        hints.append("aws")
-    if "snowflake" in lowered:
-        hints.append("snowflake")
-    if not hints and any(token in lowered for token in ("csv", "json", "local", "duckdb")):
-        hints.append("local")
-    return hints
-
-
-def _infer_arrow_type(type_name: str) -> str:
-    lowered = type_name.lower()
-    if any(token in lowered for token in ("bool",)):
-        return "boolean"
-    if any(token in lowered for token in ("int", "uint")):
-        return "integer"
-    if any(token in lowered for token in ("float", "double", "decimal")):
-        return "number"
-    if "timestamp" in lowered:
-        return "datetime"
-    if "date" in lowered:
-        return "date"
-    if any(token in lowered for token in ("list", "large_list", "fixed_size_list")):
-        return "array"
-    if any(token in lowered for token in ("struct", "map")):
-        return "object"
-    return "string"
-
-
-def _infer_duckdb_type(type_name: str) -> str:
-    lowered = type_name.lower()
-    if "bool" in lowered:
-        return "boolean"
-    if any(token in lowered for token in ("tinyint", "smallint", "integer", "bigint", "hugeint")):
-        return "integer"
-    if any(token in lowered for token in ("float", "double", "decimal", "real")):
-        return "number"
-    if "timestamp" in lowered:
-        return "datetime"
-    if lowered == "date":
-        return "date"
-    if lowered.endswith("[]") or "list" in lowered or lowered.startswith("array"):
-        return "array"
-    if "struct" in lowered or "map" in lowered:
-        return "object"
-    return "string"
-
-
-def _infer_scalar_type(value: Any) -> str:
-    if value is None:
-        return "null"
-    text = str(value).strip()
-    if text == "":
-        return "null"
-    if text.lower() in {"true", "false"}:
-        return "boolean"
-    if re.fullmatch(r"-?\d+", text):
-        return "integer"
-    if re.fullmatch(r"-?\d+\.\d+", text):
-        return "number"
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
-        return "date"
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}[T ][0-9:.+-Zz]+", text):
-        return "datetime"
-    return "string"
-
-
-def _infer_python_type(value: Any) -> str:
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, int) and not isinstance(value, bool):
-        return "integer"
-    if isinstance(value, float):
-        return "number"
-    if isinstance(value, list):
-        return "array"
-    if isinstance(value, dict):
-        return "object"
-    return _infer_scalar_type(value)
-
-
-def _merge_types(values: Sequence[str]) -> str:
-    filtered = [value for value in values if value != "null"]
-    if not filtered:
-        return "string"
-    most_common = Counter(filtered).most_common(1)[0][0]
-    return most_common
-
-
-def _map_inferred_type_to_contract_type(value: str) -> str:
-    mapping = {
-        "boolean": "boolean",
-        "integer": "integer",
-        "number": "number",
-        "date": "date",
-        "datetime": "timestamp",
-        "array": "array",
-        "object": "object",
-        "string": "string",
-    }
-    return mapping.get(value, "string")
+    return redact_secrets(text)
 
 
 def _default_binding(provider_name: str, expose_name: str) -> Dict[str, Any]:

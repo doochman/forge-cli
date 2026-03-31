@@ -405,7 +405,7 @@ def print_forge_help() -> None:
     console.print()
     workflow_panel = Panel(
         "[bold]Step 1:[/bold] Run [bright_cyan]fluid forge[/bright_cyan]\n"
-        "[bold]Step 2:[/bold] Answer a few questions about your project\n"
+        "[bold]Step 2:[/bold] Answer a few questions about your project using a number, short phrase, or your own wording\n"
         "[bold]Step 3:[/bold] Copilot discovers local metadata and generates a full contract\n"
         "[bold]Step 4:[/bold] Forge validates and repairs the contract if needed\n"
         "[bold]Step 5:[/bold] Forge scaffolds only after validation passes\n"
@@ -423,11 +423,12 @@ def print_forge_help() -> None:
     tips_panel = Panel(
         "💡 [bold]Pro Tips:[/bold]\n\n"
         "  • Start with [bright_cyan]--mode copilot[/bright_cyan] for AI-guided creation\n"
+        "  • Interactive prompts accept numbers, short phrases, and natural-language answers\n"
         "  • Use [yellow]--dry-run[/yellow] to preview before generating\n"
         "  • Use [yellow]--save-memory[/yellow] for non-interactive runs that should remember project conventions\n"
         "  • Use [yellow]--show-memory[/yellow] to inspect what copilot remembers for this project\n"
         "  • Try [yellow]--quickstart[/yellow] for instant setup with smart defaults\n"
-        "  • Explore templates: [bright_cyan]fluid market search[/bright_cyan]\n"
+        "  • Explore templates: [bright_cyan]fluid blueprint list[/bright_cyan]\n"
         "  • Get help anytime: [bright_cyan]fluid doctor[/bright_cyan]",
         border_style="bright_yellow",
         padding=(1, 2),

@@ -134,6 +134,31 @@ class TestCopilotAgent:
         assert len(questions) >= 3
         keys = [q["key"] for q in questions]
         assert "project_goal" in keys
+        use_case_question = next(q for q in questions if q["key"] == "use_case")
+        assert use_case_question["choices"][0] == {
+            "label": "Analytics & BI",
+            "value": "analytics",
+        }
+        assert use_case_question["choices"][-1] == {
+            "label": "Other / Not sure",
+            "value": "other",
+        }
+        assert use_case_question["follow_up"]["key"] == "use_case_other"
+
+    def test_show_next_steps_uses_fluid_commands(self):
+        agent = self._make_agent()
+        agent.console = MagicMock()
+
+        agent._show_next_steps(Path("/tmp"), {}, {"recommended_provider": "gcp"})
+
+        panel = agent.console.print.call_args.args[0]
+        text = str(panel.renderable)
+        assert "fluid validate contract.fluid.yaml" in text
+        assert "fluid plan contract.fluid.yaml --out runtime/plan.json" in text
+        assert "fluid apply runtime/plan.json" in text
+        assert "fluid market --search" in text
+        assert "make validate" not in text
+        assert "fluid market search" not in text
 
     def test_analyze_requirements_ml(self):
         agent = self._make_agent()
@@ -156,7 +181,7 @@ class TestCopilotAgent:
             "complexity": "intermediate",
         }
         suggestions = agent.analyze_requirements(context)
-        assert "recommended_template" in suggestions
+        assert suggestions["recommended_template"] == "streaming"
 
     def test_analyze_requirements_etl(self):
         agent = self._make_agent()
@@ -189,7 +214,30 @@ class TestCopilotAgent:
             "complexity": "beginner",
         }
         suggestions = agent.analyze_requirements(context)
-        assert suggestions is not None
+        assert suggestions["recommended_template"] == "starter"
+
+    def test_analyze_requirements_data_platform(self):
+        agent = self._make_agent()
+        context = {
+            "project_goal": "Lakehouse platform",
+            "data_sources": "object storage",
+            "use_case": "data_platform",
+            "complexity": "intermediate",
+        }
+        suggestions = agent.analyze_requirements(context)
+        assert suggestions["recommended_template"] == "etl_pipeline"
+
+    def test_analyze_requirements_other_with_follow_up(self):
+        agent = self._make_agent()
+        context = {
+            "project_goal": "Internal platform",
+            "data_sources": "warehouse tables",
+            "use_case": "other",
+            "use_case_other": "CDC sync for warehouse loads",
+            "complexity": "intermediate",
+        }
+        suggestions = agent.analyze_requirements(context)
+        assert suggestions["recommended_template"] == "etl_pipeline"
 
     def test_create_project_success(self):
         from fluid_build.cli.forge_copilot_runtime import CopilotGenerationResult, DiscoveryReport
@@ -205,7 +253,7 @@ class TestCopilotAgent:
                     "best_practices": [],
                     "technology_stack": [],
                 },
-                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                contract={"name": "test-project", "fluidVersion": "0.7.2"},
                 readme_markdown="# Test Project\n",
                 additional_files={},
                 discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
@@ -235,7 +283,7 @@ class TestCopilotAgent:
                     "best_practices": [],
                     "technology_stack": [],
                 },
-                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                contract={"name": "test-project", "fluidVersion": "0.7.2"},
                 readme_markdown="# Test Project\n",
                 additional_files={},
                 discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
@@ -256,7 +304,7 @@ class TestCopilotAgent:
         assert result is True
         mock_store_cls.return_value.save.assert_called_once()
 
-    @patch("fluid_build.cli.forge.Confirm.ask", return_value=True)
+    @patch("fluid_build.cli.forge.ask_confirmation", return_value=True)
     @patch("fluid_build.cli.forge.CopilotMemoryStore")
     def test_create_project_prompts_before_saving_memory_in_interactive_mode(
         self, mock_store_cls, mock_confirm
@@ -275,7 +323,7 @@ class TestCopilotAgent:
                     "best_practices": [],
                     "technology_stack": [],
                 },
-                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                contract={"name": "test-project", "fluidVersion": "0.7.2"},
                 readme_markdown="# Test Project\n",
                 additional_files={},
                 discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
@@ -313,7 +361,7 @@ class TestCopilotAgent:
                     "best_practices": [],
                     "technology_stack": [],
                 },
-                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                contract={"name": "test-project", "fluidVersion": "0.7.2"},
                 readme_markdown="# Test Project\n",
                 additional_files={},
                 discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
@@ -349,7 +397,7 @@ class TestCopilotAgent:
                     "best_practices": [],
                     "technology_stack": [],
                 },
-                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                contract={"name": "test-project", "fluidVersion": "0.7.2"},
                 readme_markdown="# Test Project\n",
                 additional_files={},
                 discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
@@ -511,6 +559,30 @@ class TestCopilotAgent:
         agent = self._make_agent()
         agent.console = None
         agent._show_ai_analysis({}, {})  # Should not raise
+
+    def test_show_ai_analysis_prefers_use_case_other_text(self):
+        agent = self._make_agent()
+        agent.console = MagicMock()
+        agent._show_ai_analysis(
+            {
+                "project_goal": "Test project",
+                "data_sources": "warehouse tables",
+                "use_case": "other",
+                "use_case_other": "Customer 360",
+                "complexity": "intermediate",
+            },
+            {
+                "recommended_template": "analytics",
+                "recommended_provider": "local",
+                "recommended_patterns": [],
+                "architecture_suggestions": [],
+                "best_practices": [],
+            },
+        )
+        panel = agent.console.print.call_args.args[0]
+        text = str(panel.renderable)
+        assert "Customer 360" in text
+        assert "Use Case:** other" not in text
 
     def test_generate_intelligent_contract(self):
         agent = self._make_agent()
@@ -828,6 +900,35 @@ class TestRunBlueprintMode:
         result = run_blueprint_mode(args, logger)
         assert result in (0, 1)
 
+    @patch("fluid_build.cli.forge.Console")
+    @patch("fluid_build.cli.forge.blueprint_registry")
+    def test_blueprint_success_shows_fluid_next_steps(self, mock_bp_reg, mock_console_cls):
+        from fluid_build.cli.forge import run_blueprint_mode
+
+        mock_bp = MagicMock()
+        mock_bp.metadata.title = "Customer 360"
+        mock_bp.metadata.description = "Enterprise blueprint"
+        mock_bp.generate_project.return_value = True
+        mock_bp_reg.get_blueprint.return_value = mock_bp
+        console = MagicMock()
+        mock_console_cls.return_value = console
+        args = MagicMock()
+        args.blueprint = "quickstart"
+        args.non_interactive = False
+        args.target_dir = "/tmp/test-bp"
+        args.dry_run = False
+        logger = logging.getLogger("test")
+
+        result = run_blueprint_mode(args, logger)
+
+        assert result in (0, 1)
+        panel = console.print.call_args_list[-1].args[0]
+        text = str(panel.renderable)
+        assert "fluid validate contract.fluid.yaml" in text
+        assert "fluid plan contract.fluid.yaml --out runtime/plan.json" in text
+        assert "fluid apply runtime/plan.json" in text
+        assert "python -m fluid_build" not in text
+
 
 class TestGatherCopilotContext:
     def test_no_console(self):
@@ -837,14 +938,78 @@ class TestGatherCopilotContext:
         result = gather_copilot_context(agent, None)
         assert isinstance(result, dict)
 
-    @patch("fluid_build.cli.forge.Prompt.ask", return_value="test answer")
-    def test_with_console(self, mock_ask):
+    def test_with_console(self):
         from fluid_build.cli.forge import CopilotAgent, gather_copilot_context
 
         agent = CopilotAgent()
         console = MagicMock()
+        console.input.side_effect = [
+            "test goal",
+            "test source",
+            "Analytics & BI",
+            "",
+            "intermediate",
+        ]
         result = gather_copilot_context(agent, console)
         assert isinstance(result, dict)
+        assert result["raw_answers"]["project_goal"] == "test goal"
+        assert result["dialog_transcript"][0]["field"] == "project_goal"
+
+    def test_with_console_maps_labeled_use_case_choices(self):
+        from fluid_build.cli.forge import CopilotAgent, gather_copilot_context
+
+        agent = CopilotAgent()
+        console = MagicMock()
+        console.input.side_effect = [
+            "Customer 360",
+            "BigQuery tables",
+            "dashboards and BI",
+            "small team",
+            "advanced setup",
+        ]
+        result = gather_copilot_context(agent, console)
+        assert result["use_case"] == "analytics"
+        assert result["team_size"] == "small (2-5)"
+        assert result["complexity"] == "advanced"
+        assert result["raw_answers"]["use_case"] == "dashboards and BI"
+
+    def test_with_console_collects_use_case_other_follow_up(self):
+        from fluid_build.cli.forge import CopilotAgent, gather_copilot_context
+
+        agent = CopilotAgent()
+        console = MagicMock()
+        console.input.side_effect = [
+            "Customer 360",
+            "BigQuery tables",
+            "customer 360 graph",
+            "solo",
+            "simple",
+        ]
+        result = gather_copilot_context(agent, console)
+        assert result["use_case"] == "other"
+        assert result["use_case_other"] == "customer 360 graph"
+        assert result["dialog_transcript"][2]["raw_input"] == "customer 360 graph"
+
+    def test_with_domain_agent_captures_friendly_raw_answers(self):
+        from fluid_build.cli.forge import gather_copilot_context
+        from fluid_build.cli.forge_agents import FinanceAgent
+
+        agent = FinanceAgent()
+        console = MagicMock()
+        console.input.side_effect = [
+            "fraud analytics",
+            "card transactions",
+            "pci",
+            "yes",
+        ]
+
+        result = gather_copilot_context(agent, console)
+
+        assert result["product_type"] == "fraud_detection"
+        assert result["compliance_requirements"] == "pci_dss"
+        assert result["real_time"] == "yes"
+        assert result["raw_answers"]["product_type"] == "fraud analytics"
+        assert result["dialog_transcript"][0]["resolved_value"] == "fraud_detection"
 
 
 class TestGetEnhancedTemplates:

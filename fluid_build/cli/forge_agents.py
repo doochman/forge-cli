@@ -20,10 +20,110 @@ in specific industries and use cases.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fluid_build.cli.console import cprint
 from fluid_build.cli.console import error as console_error
+from fluid_build.cli.forge_dialogs import build_choice, normalize_choice_value
+
+YES_NO_CHOICES = [
+    build_choice("Yes", "yes", aliases=["y", "yeah", "yep", "sure", "real time"]),
+    build_choice("No", "no", aliases=["n", "nope", "batch", "not really"]),
+]
+
+FINANCE_PRODUCT_CHOICES = [
+    build_choice("Risk Analytics", "risk_analytics", aliases=["risk", "market risk", "risk scoring"]),
+    build_choice("Trading Platform", "trading_platform", aliases=["trading", "trades", "execution"]),
+    build_choice("Fraud Detection", "fraud_detection", aliases=["fraud", "fraud analytics", "fraud monitoring"]),
+    build_choice("Customer Analytics", "customer_analytics", aliases=["customer", "customer insights", "customer 360"]),
+    build_choice(
+        "Compliance Reporting",
+        "compliance_reporting",
+        aliases=["compliance", "regulatory reporting", "sox reporting"],
+    ),
+]
+
+FINANCE_COMPLIANCE_CHOICES = [
+    build_choice("SOX", "sox", aliases=["sarbanes oxley"]),
+    build_choice("GDPR", "gdpr", aliases=["privacy"]),
+    build_choice("PCI DSS", "pci_dss", aliases=["pci", "card compliance"]),
+    build_choice("Basel III", "basel_iii", aliases=["basel"]),
+    build_choice("MiFID II", "mifid_ii", aliases=["mifid"]),
+    build_choice("None / not sure", "none", aliases=["none", "not sure", "no compliance"]),
+]
+
+HEALTHCARE_PRODUCT_CHOICES = [
+    build_choice("Patient Analytics", "patient_analytics", aliases=["patient", "patient insights"]),
+    build_choice("Clinical Research", "clinical_research", aliases=["research", "clinical studies"]),
+    build_choice("Population Health", "population_health", aliases=["population", "public health"]),
+    build_choice("EHR Integration", "ehr_integration", aliases=["ehr", "emr", "clinical integration"]),
+    build_choice("Drug Discovery", "drug_discovery", aliases=["drug", "discovery", "r and d"]),
+]
+
+PHI_CHOICES = [
+    build_choice("Yes", "yes", aliases=["phi", "full phi"]),
+    build_choice("No", "no", aliases=["no phi"]),
+    build_choice("De-identified only", "deidentified_only", aliases=["deidentified", "de identified", "masked"]),
+]
+
+RETAIL_PRODUCT_CHOICES = [
+    build_choice("Customer 360", "customer_360", aliases=["customer 360", "cdp", "customer profile"]),
+    build_choice(
+        "Recommendation Engine",
+        "recommendation_engine",
+        aliases=["recommendations", "rec engine", "personalization"],
+    ),
+    build_choice(
+        "Inventory Optimization",
+        "inventory_optimization",
+        aliases=["inventory", "stock optimization", "replenishment"],
+    ),
+    build_choice("Price Optimization", "price_optimization", aliases=["pricing", "price"]),
+    build_choice("Demand Forecasting", "demand_forecasting", aliases=["forecasting", "demand"]),
+]
+
+RETAIL_SCALE_CHOICES = [
+    build_choice("Small (<1M records)", "small (<1m records)", aliases=["small", "<1m", "under 1m"]),
+    build_choice(
+        "Medium (1M-100M)",
+        "medium (1m-100m)",
+        aliases=["medium", "mid", "1m to 100m", "10m"],
+    ),
+    build_choice("Large (>100M)", "large (>100m)", aliases=["large", "huge", "100m+", "enterprise scale"]),
+]
+
+
+def _raw_answer(context: Dict[str, Any], key: str) -> str:
+    raw_answers = context.get("raw_answers") or {}
+    return str(raw_answers.get(key) or context.get(key) or "").strip()
+
+
+def _resolve_context_choice(
+    context: Dict[str, Any],
+    *,
+    field_name: str,
+    choices: List[Dict[str, Any]],
+    default: Optional[str] = None,
+) -> Optional[str]:
+    return normalize_choice_value(
+        context.get(field_name),
+        field_name=field_name,
+        choices=choices,
+        default=None,
+    ) or normalize_choice_value(
+        _raw_answer(context, field_name),
+        field_name=field_name,
+        choices=choices,
+        default=default,
+    )
+
+
+def _choice_label(choices: List[Dict[str, Any]], value: Any) -> str:
+    current = str(value or "").strip()
+    for choice in choices:
+        if str(choice.get("value") or "").strip() == current:
+            return str(choice.get("label") or current)
+    return current.replace("_", " ").title() if current else "Not specified"
 
 
 class AIAgentBase:
@@ -146,17 +246,29 @@ class AIAgentBase:
 
         from rich.panel import Panel
 
+        goal = context.get("project_goal", "Data Product")
+        data_sources = context.get("data_sources", "Not specified")
+        try:
+            product_choices = self.get_questions()[0]["choices"]
+        except (NotImplementedError, IndexError, KeyError, TypeError):
+            product_choices = []
+        product_type = _choice_label(product_choices, context.get("product_type"))
+        patterns = ", ".join(suggestions.get("recommended_patterns", []) or ["Standard scaffolding"])
+
         analysis = f"""
-[bold cyan]📊 {self.domain.title()} Domain Analysis[/bold cyan]
+🎯 **Project Goal:** {goal}
+📊 **Data Sources:** {data_sources}
+🏷️ **Domain Focus:** {product_type}
 
-[yellow]Template:[/yellow] {suggestions.get('recommended_template')}
-[yellow]Provider:[/yellow] {suggestions.get('recommended_provider')}
-[yellow]Patterns:[/yellow] {', '.join(suggestions.get('recommended_patterns', []))}
+🤖 **Recommendations:**
+• Template: {suggestions.get('recommended_template')}
+• Provider: {suggestions.get('recommended_provider')}
+• Patterns: {patterns}
 
-[green]✓[/green] Analysis complete - optimized for {self.domain} use cases
+[dim]Optimized for {self.domain} workflows and guardrails.[/dim]
         """
 
-        self.console.print(Panel(analysis.strip(), border_style="blue"))
+        self.console.print(Panel(analysis.strip(), title="🧠 AI Analysis", border_style="blue"))
 
     def _show_next_steps(
         self, target_dir: Path, context: Dict[str, Any], suggestions: Dict[str, Any]
@@ -174,9 +286,9 @@ class AIAgentBase:
 3. Configure your {suggestions['recommended_provider']} provider credentials
 
 🚀 **Recommended Workflow:**
-1. `make validate` - Validate your contract
-2. `make plan` - Generate execution plan  
-3. `make apply` - Deploy your data product
+1. `fluid validate contract.fluid.yaml` - Validate your contract
+2. `fluid plan contract.fluid.yaml --out runtime/plan.json` - Generate execution plan
+3. `fluid apply runtime/plan.json` - Deploy your data product
 
 💡 **{self.domain.title()}-Specific Tips:**
 """
@@ -192,6 +304,8 @@ class AIAgentBase:
             next_steps += "• Configure personalization engine settings\n"
             next_steps += "• Set up A/B testing framework\n"
 
+        next_steps += "• Run `fluid auth status` to confirm provider access\n"
+        next_steps += "• Use `fluid doctor` if anything looks off\n"
         next_steps += "\n[dim]Generated by FLUID AI Agent - Domain: " + self.domain + "[/dim]"
 
         self.console.print(Panel(next_steps.strip(), title="🚀 What's Next?", border_style="green"))
@@ -214,13 +328,7 @@ class FinanceAgent(AIAgentBase):
                 "key": "product_type",
                 "question": "What type of financial product are you building?",
                 "type": "choice",
-                "choices": [
-                    "risk_analytics",
-                    "trading_platform",
-                    "fraud_detection",
-                    "customer_analytics",
-                    "compliance_reporting",
-                ],
+                "choices": FINANCE_PRODUCT_CHOICES,
                 "required": True,
             },
             {
@@ -234,23 +342,41 @@ class FinanceAgent(AIAgentBase):
                 "key": "compliance_requirements",
                 "question": "Any specific compliance requirements?",
                 "type": "choice",
-                "choices": ["sox", "gdpr", "pci_dss", "basel_iii", "mifid_ii", "none"],
+                "choices": FINANCE_COMPLIANCE_CHOICES,
                 "required": False,
             },
             {
                 "key": "real_time",
                 "question": "Do you need real-time processing?",
                 "type": "choice",
-                "choices": ["yes", "no"],
+                "choices": YES_NO_CHOICES,
                 "default": "no",
             },
         ]
 
     def analyze_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze finance-specific requirements"""
-        product_type = context.get("product_type", "customer_analytics")
-        compliance = context.get("compliance_requirements", "none")
-        real_time = context.get("real_time", "no") == "yes"
+        product_type = _resolve_context_choice(
+            context,
+            field_name="product_type",
+            choices=FINANCE_PRODUCT_CHOICES,
+            default="customer_analytics",
+        )
+        compliance = _resolve_context_choice(
+            context,
+            field_name="compliance_requirements",
+            choices=FINANCE_COMPLIANCE_CHOICES,
+            default="none",
+        )
+        real_time = (
+            _resolve_context_choice(
+                context,
+                field_name="real_time",
+                choices=YES_NO_CHOICES,
+                default="no",
+            )
+            == "yes"
+        )
 
         suggestions = {
             "recommended_template": "finance-analytics",
@@ -356,13 +482,7 @@ class HealthcareAgent(AIAgentBase):
                 "key": "product_type",
                 "question": "What type of healthcare product are you building?",
                 "type": "choice",
-                "choices": [
-                    "patient_analytics",
-                    "clinical_research",
-                    "population_health",
-                    "ehr_integration",
-                    "drug_discovery",
-                ],
+                "choices": HEALTHCARE_PRODUCT_CHOICES,
                 "required": True,
             },
             {
@@ -376,23 +496,41 @@ class HealthcareAgent(AIAgentBase):
                 "key": "hipaa_required",
                 "question": "Is HIPAA compliance required?",
                 "type": "choice",
-                "choices": ["yes", "no"],
+                "choices": YES_NO_CHOICES,
                 "default": "yes",
             },
             {
                 "key": "phi_handling",
                 "question": "Will you handle PHI (Protected Health Information)?",
                 "type": "choice",
-                "choices": ["yes", "no", "deidentified_only"],
+                "choices": PHI_CHOICES,
                 "default": "yes",
             },
         ]
 
     def analyze_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze healthcare-specific requirements"""
-        product_type = context.get("product_type", "patient_analytics")
-        hipaa = context.get("hipaa_required", "yes") == "yes"
-        phi = context.get("phi_handling", "yes")
+        product_type = _resolve_context_choice(
+            context,
+            field_name="product_type",
+            choices=HEALTHCARE_PRODUCT_CHOICES,
+            default="patient_analytics",
+        )
+        hipaa = (
+            _resolve_context_choice(
+                context,
+                field_name="hipaa_required",
+                choices=YES_NO_CHOICES,
+                default="yes",
+            )
+            == "yes"
+        )
+        phi = _resolve_context_choice(
+            context,
+            field_name="phi_handling",
+            choices=PHI_CHOICES,
+            default="yes",
+        )
 
         suggestions = {
             "recommended_template": "healthcare-analytics",
@@ -487,13 +625,7 @@ class RetailAgent(AIAgentBase):
                 "key": "product_type",
                 "question": "What type of retail product are you building?",
                 "type": "choice",
-                "choices": [
-                    "customer_360",
-                    "recommendation_engine",
-                    "inventory_optimization",
-                    "price_optimization",
-                    "demand_forecasting",
-                ],
+                "choices": RETAIL_PRODUCT_CHOICES,
                 "required": True,
             },
             {
@@ -507,23 +639,41 @@ class RetailAgent(AIAgentBase):
                 "key": "real_time_personalization",
                 "question": "Do you need real-time personalization?",
                 "type": "choice",
-                "choices": ["yes", "no"],
+                "choices": YES_NO_CHOICES,
                 "default": "yes",
             },
             {
                 "key": "scale",
                 "question": "Expected data scale?",
                 "type": "choice",
-                "choices": ["small (<1M records)", "medium (1M-100M)", "large (>100M)"],
+                "choices": RETAIL_SCALE_CHOICES,
                 "required": True,
             },
         ]
 
     def analyze_requirements(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze retail-specific requirements"""
-        product_type = context.get("product_type", "customer_360")
-        real_time = context.get("real_time_personalization", "yes") == "yes"
-        scale = context.get("scale", "medium")
+        product_type = _resolve_context_choice(
+            context,
+            field_name="product_type",
+            choices=RETAIL_PRODUCT_CHOICES,
+            default="customer_360",
+        )
+        real_time = (
+            _resolve_context_choice(
+                context,
+                field_name="real_time_personalization",
+                choices=YES_NO_CHOICES,
+                default="yes",
+            )
+            == "yes"
+        )
+        scale = _resolve_context_choice(
+            context,
+            field_name="scale",
+            choices=RETAIL_SCALE_CHOICES,
+            default="medium (1m-100m)",
+        )
 
         suggestions = {
             "recommended_template": "retail-analytics",

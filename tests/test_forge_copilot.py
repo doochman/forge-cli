@@ -73,6 +73,15 @@ class TestCopilotAgentAnalyze:
     def _agent(self):
         return CopilotAgent()
 
+    def test_get_questions_exposes_friendly_use_case_choices(self):
+        agent = self._agent()
+        questions = agent.get_questions()
+        use_case_question = next(q for q in questions if q["key"] == "use_case")
+        assert use_case_question["choices"][0]["label"] == "Analytics & BI"
+        assert use_case_question["choices"][0]["value"] == "analytics"
+        assert use_case_question["choices"][-1]["value"] == "other"
+        assert use_case_question["follow_up"]["key"] == "use_case_other"
+
     def test_default_suggestions(self):
         agent = self._agent()
         s = agent.analyze_requirements({})
@@ -89,13 +98,25 @@ class TestCopilotAgentAnalyze:
 
     def test_streaming_use_case(self):
         agent = self._agent()
-        s = agent.analyze_requirements({"use_case": "real_time"})
+        s = agent.analyze_requirements({"use_case": "streaming"})
         assert "stream" in s["recommended_template"].lower()
 
     def test_analytics_use_case(self):
         agent = self._agent()
         s = agent.analyze_requirements({"use_case": "analytics"})
         assert "analytic" in s["recommended_template"].lower()
+
+    def test_data_platform_use_case(self):
+        agent = self._agent()
+        s = agent.analyze_requirements({"use_case": "data_platform"})
+        assert s["recommended_template"] == "etl_pipeline"
+
+    def test_other_use_case_infers_from_follow_up(self):
+        agent = self._agent()
+        s = agent.analyze_requirements(
+            {"use_case": "other", "use_case_other": "customer CDC sync"}
+        )
+        assert s["recommended_template"] == "etl_pipeline"
 
     def test_bigquery_provider(self):
         agent = self._agent()
