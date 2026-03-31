@@ -176,13 +176,15 @@ class GovernanceValidator:
     def validate_column_descriptions(self) -> Tuple[int, int]:
         """Validate column descriptions - returns (applied, total)"""
         try:
-            self.cursor.execute(f"""
+            self.cursor.execute(
+                f"""
                 SELECT COUNT(*) as total,
                        SUM(CASE WHEN COMMENT IS NOT NULL AND COMMENT != '' THEN 1 ELSE 0 END) as with_desc
                 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_SCHEMA = '{self.schema}'
                   AND TABLE_NAME = '{self.table}'
-            """)
+            """
+            )
             result = self.cursor.fetchone()
             if result:
                 return (result[1] or 0, result[0] or 0)
@@ -194,7 +196,8 @@ class GovernanceValidator:
     def validate_table_tags(self) -> List[Dict[str, str]]:
         """Get all table-level tags"""
         try:
-            self.cursor.execute(f"""
+            self.cursor.execute(
+                f"""
                 SELECT TAG_NAME, TAG_VALUE
                 FROM TABLE(
                     INFORMATION_SCHEMA.TAG_REFERENCES_ALL_COLUMNS(
@@ -203,7 +206,8 @@ class GovernanceValidator:
                 )
                 WHERE LEVEL = 'TABLE'
                 ORDER BY TAG_NAME
-            """)
+            """
+            )
             return [{"name": row[0], "value": row[1]} for row in self.cursor.fetchall()]
         except Exception as e:
             logger.error(f"Error validating table tags: {e}")
@@ -212,7 +216,8 @@ class GovernanceValidator:
     def validate_column_tags(self) -> Dict[str, int]:
         """Get column tag counts - returns {column_name: tag_count}"""
         try:
-            self.cursor.execute(f"""
+            self.cursor.execute(
+                f"""
                 SELECT COLUMN_NAME, COUNT(*) as tag_count
                 FROM TABLE(
                     INFORMATION_SCHEMA.TAG_REFERENCES_ALL_COLUMNS(
@@ -222,7 +227,8 @@ class GovernanceValidator:
                 WHERE LEVEL = 'COLUMN'
                 GROUP BY COLUMN_NAME
                 ORDER BY COLUMN_NAME
-            """)
+            """
+            )
             return {row[0]: row[1] for row in self.cursor.fetchall()}
         except Exception as e:
             logger.error(f"Error validating column tags: {e}")
@@ -231,7 +237,8 @@ class GovernanceValidator:
     def validate_masking_policies(self) -> List[Dict[str, str]]:
         """Get masking policies on columns"""
         try:
-            self.cursor.execute(f"""
+            self.cursor.execute(
+                f"""
                 SELECT COLUMN_NAME, POLICY_NAME
                 FROM INFORMATION_SCHEMA.POLICY_REFERENCES
                 WHERE POLICY_DB = '{self.database}'
@@ -239,7 +246,8 @@ class GovernanceValidator:
                   AND REF_SCHEMA_NAME = '{self.schema}'
                   AND REF_ENTITY_NAME = '{self.table}'
                   AND POLICY_KIND = 'MASKING_POLICY'
-            """)
+            """
+            )
             return [{"column": row[0], "policy": row[1]} for row in self.cursor.fetchall()]
         except Exception as e:
             # Try alternative query
@@ -630,11 +638,13 @@ class UnifiedGovernanceApplicator:
         """Apply tag to column"""
         if not self.dry_run:
             try:
-                self.cursor.execute(f"""
+                self.cursor.execute(
+                    f"""
                     ALTER TABLE {full_table}
                     MODIFY COLUMN {column_name}
                     SET TAG {tag_name} = '{tag_value}'
-                """)
+                """
+                )
             except Exception as e:
                 logger.warning(f"Could not apply tag {tag_name} to column {column_name}: {e}")
 
@@ -642,13 +652,15 @@ class UnifiedGovernanceApplicator:
         """Get column data type"""
         try:
             parts = full_table.split(".")
-            self.cursor.execute(f"""
+            self.cursor.execute(
+                f"""
                 SELECT DATA_TYPE 
                 FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_SCHEMA = '{parts[1]}'
                   AND TABLE_NAME = '{parts[2]}'
                   AND COLUMN_NAME = '{column_name}'
-            """)
+            """
+            )
             result = self.cursor.fetchone()
             return result[0] if result else "VARCHAR"
         except Exception:
@@ -689,11 +701,13 @@ class UnifiedGovernanceApplicator:
             try:
                 parts = full_table.split(".")
                 schema = parts[1]
-                self.cursor.execute(f"""
+                self.cursor.execute(
+                    f"""
                     ALTER TABLE {full_table}
                     MODIFY COLUMN {column_name}
                     SET MASKING POLICY {schema}.{policy_name}
-                """)
+                """
+                )
                 cprint(f"   ✅ Applied {policy_name} to {column_name}")
                 self.stats["masking_policies_applied"] += 1
             except Exception as e:

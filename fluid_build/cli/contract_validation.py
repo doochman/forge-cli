@@ -469,7 +469,11 @@ class ContractValidator:
             expose = dict(expose, id=expose["exposeId"])
         if "type" not in expose and "kind" in expose:
             expose = dict(expose, type=expose["kind"])
-        if "schema" not in expose and "contract" in expose and "schema" in expose.get("contract", {}):
+        if (
+            "schema" not in expose
+            and "contract" in expose
+            and "schema" in expose.get("contract", {})
+        ):
             expose = dict(expose, schema=expose["contract"]["schema"])
 
         expose_id = expose.get("id", f"expose_{idx}")
@@ -912,11 +916,7 @@ class ContractValidator:
         for idx, consume in enumerate(consumes):
             consume_id = consume.get("id", f"consume_{idx}")
             # Accept FLUID DSL format (productId+exposeId) OR legacy ref field
-            consume_ref = (
-                consume.get("ref")
-                or consume.get("productId")
-                or consume.get("provider")
-            )
+            consume_ref = consume.get("ref") or consume.get("productId") or consume.get("provider")
 
             path = f"consumes[{idx}]"
 

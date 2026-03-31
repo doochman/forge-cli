@@ -58,11 +58,27 @@ class LocalValidationProvider(ValidationProvider):
 
     TYPE_MAPPINGS: Dict[str, List[str]] = {
         "VARCHAR": ["VARCHAR", "STRING", "TEXT", "CHAR", "JSON", "JSONB"],
-        "BIGINT": ["BIGINT", "INT", "INTEGER", "SMALLINT", "TINYINT", "INT64", "HUGEINT", "UBIGINT", "UINTEGER"],
+        "BIGINT": [
+            "BIGINT",
+            "INT",
+            "INTEGER",
+            "SMALLINT",
+            "TINYINT",
+            "INT64",
+            "HUGEINT",
+            "UBIGINT",
+            "UINTEGER",
+        ],
         "DOUBLE": ["DOUBLE", "FLOAT", "REAL", "DECIMAL", "NUMERIC", "FLOAT64"],
         "BOOLEAN": ["BOOLEAN", "BOOL"],
         "DATE": ["DATE"],
-        "TIMESTAMP": ["TIMESTAMP", "DATETIME", "TIMESTAMP_NTZ", "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE"],
+        "TIMESTAMP": [
+            "TIMESTAMP",
+            "DATETIME",
+            "TIMESTAMP_NTZ",
+            "TIMESTAMPTZ",
+            "TIMESTAMP WITH TIME ZONE",
+        ],
         "TIME": ["TIME"],
         "BLOB": ["BLOB", "BINARY", "BYTES", "VARBINARY"],
         "JSON": ["JSON", "JSONB", "VARIANT"],
@@ -377,6 +393,7 @@ class LocalValidationProvider(ValidationProvider):
             conn = duckdb.connect(abs_path, read_only=True)
             table_ref = f'"{schema_name}"."{table_name}"'
             try:
+
                 def _exec(sql):
                     return conn.execute(sql).fetchall()
 

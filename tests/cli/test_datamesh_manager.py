@@ -38,7 +38,6 @@ import yaml
 
 from fluid_build.cli import datamesh_manager as dmm_mod
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -88,6 +87,7 @@ def _clean_dmm_env(monkeypatch):
 # 1. Regression: _cmd_* functions accept (args, logger)
 # ---------------------------------------------------------------------------
 
+
 class TestCmdSignatures:
     """Ensure all _cmd_* functions accept two positional args (args, logger).
 
@@ -95,47 +95,55 @@ class TestCmdSignatures:
     ``args.func(args, logger)`` but the DMM handlers only accepted one arg.
     """
 
-    @pytest.mark.parametrize("fn_name", [
-        "_cmd_publish",
-        "_cmd_list",
-        "_cmd_get",
-        "_cmd_delete",
-        "_cmd_teams",
-    ])
+    @pytest.mark.parametrize(
+        "fn_name",
+        [
+            "_cmd_publish",
+            "_cmd_list",
+            "_cmd_get",
+            "_cmd_delete",
+            "_cmd_teams",
+        ],
+    )
     def test_cmd_accepts_two_args(self, fn_name):
         """Each _cmd_* function must accept (args, logger)."""
         import inspect
+
         fn = getattr(dmm_mod, fn_name)
         sig = inspect.signature(fn)
         params = list(sig.parameters.keys())
         assert len(params) >= 2, (
-            f"{fn_name} must accept at least 2 params (args, logger), "
-            f"got {params}"
+            f"{fn_name} must accept at least 2 params (args, logger), " f"got {params}"
         )
         assert params[0] == "args"
         assert params[1] == "logger"
 
-    @pytest.mark.parametrize("fn_name", [
-        "_cmd_publish",
-        "_cmd_list",
-        "_cmd_get",
-        "_cmd_delete",
-        "_cmd_teams",
-    ])
+    @pytest.mark.parametrize(
+        "fn_name",
+        [
+            "_cmd_publish",
+            "_cmd_list",
+            "_cmd_get",
+            "_cmd_delete",
+            "_cmd_teams",
+        ],
+    )
     def test_cmd_logger_has_default(self, fn_name):
         """Logger param should have a default (backwards-compatible)."""
         import inspect
+
         fn = getattr(dmm_mod, fn_name)
         sig = inspect.signature(fn)
         logger_param = sig.parameters["logger"]
-        assert logger_param.default is not inspect.Parameter.empty, (
-            f"{fn_name}: logger param must have a default value"
-        )
+        assert (
+            logger_param.default is not inspect.Parameter.empty
+        ), f"{fn_name}: logger param must have a default value"
 
 
 # ---------------------------------------------------------------------------
 # 2. Parser registration
 # ---------------------------------------------------------------------------
+
 
 class TestParserRegistration:
     """Validate that add_parser() wires all subcommands correctly."""
@@ -155,25 +163,40 @@ class TestParserRegistration:
         args = dmm_parser.parse_args(["datamesh-manager", "list"])
         assert hasattr(args, "func")
 
-    @pytest.mark.parametrize("subcmd,extra_args", [
-        ("publish", ["contract.yaml"]),
-        ("list", []),
-        ("get", ["some-product-id"]),
-        ("delete", ["some-product-id"]),
-        ("teams", []),
-    ])
+    @pytest.mark.parametrize(
+        "subcmd,extra_args",
+        [
+            ("publish", ["contract.yaml"]),
+            ("list", []),
+            ("get", ["some-product-id"]),
+            ("delete", ["some-product-id"]),
+            ("teams", []),
+        ],
+    )
     def test_subcommand_parses(self, dmm_parser, subcmd, extra_args):
         args = dmm_parser.parse_args(["dmm", subcmd] + extra_args)
         assert hasattr(args, "func")
         assert args.dmm_command == subcmd
 
     def test_publish_flags(self, dmm_parser):
-        args = dmm_parser.parse_args([
-            "dmm", "publish", "c.yaml",
-            "--dry-run", "--with-contract", "--no-create-team",
-            "--api-key", "test-key", "--api-url", "https://example.com",
-            "--team-id", "my-team", "-o", "overlay.yaml",
-        ])
+        args = dmm_parser.parse_args(
+            [
+                "dmm",
+                "publish",
+                "c.yaml",
+                "--dry-run",
+                "--with-contract",
+                "--no-create-team",
+                "--api-key",
+                "test-key",
+                "--api-url",
+                "https://example.com",
+                "--team-id",
+                "my-team",
+                "-o",
+                "overlay.yaml",
+            ]
+        )
         assert args.dry_run is True
         assert args.with_contract is True
         assert args.no_create_team is True
@@ -186,6 +209,7 @@ class TestParserRegistration:
 # ---------------------------------------------------------------------------
 # 3. Publish command
 # ---------------------------------------------------------------------------
+
 
 class TestCmdPublish:
     """Test _cmd_publish with mocked provider and loader."""
@@ -259,15 +283,21 @@ class TestCmdPublish:
     @patch.object(dmm_mod, "DataMeshManagerProvider")
     def test_publish_provider_error(self, MockProvider, mock_loader, contract_file):
         from fluid_build.providers.base import ProviderError
+
         mock_loader.return_value = MINIMAL_CONTRACT
         provider_inst = MagicMock()
         provider_inst.apply.side_effect = ProviderError("API key invalid")
         MockProvider.return_value = provider_inst
 
         args = SimpleNamespace(
-            contract=contract_file, overlay=None, dry_run=False,
-            with_contract=False, no_create_team=False, team_id=None,
-            api_key="bad-key", api_url=None,
+            contract=contract_file,
+            overlay=None,
+            dry_run=False,
+            with_contract=False,
+            no_create_team=False,
+            team_id=None,
+            api_key="bad-key",
+            api_url=None,
         )
 
         result = dmm_mod._cmd_publish(args, logging.getLogger("test"))
@@ -283,9 +313,14 @@ class TestCmdPublish:
         MockProvider.return_value = provider_inst
 
         args = SimpleNamespace(
-            contract=contract_file, overlay=None, dry_run=False,
-            with_contract=False, no_create_team=False, team_id=None,
-            api_key="key", api_url=None,
+            contract=contract_file,
+            overlay=None,
+            dry_run=False,
+            with_contract=False,
+            no_create_team=False,
+            team_id=None,
+            api_key="key",
+            api_url=None,
         )
 
         # Call with only 1 arg — logger defaults to None
@@ -299,6 +334,7 @@ class TestCmdPublish:
 # ---------------------------------------------------------------------------
 # 4. List command
 # ---------------------------------------------------------------------------
+
 
 class TestCmdList:
 
@@ -327,6 +363,7 @@ class TestCmdList:
     @patch.object(dmm_mod, "DataMeshManagerProvider")
     def test_list_error(self, MockProvider):
         from fluid_build.providers.base import ProviderError
+
         provider_inst = MagicMock()
         provider_inst.list_products.side_effect = ProviderError("fail")
         MockProvider.return_value = provider_inst
@@ -339,6 +376,7 @@ class TestCmdList:
 # ---------------------------------------------------------------------------
 # 5. Get command
 # ---------------------------------------------------------------------------
+
 
 class TestCmdGet:
 
@@ -356,6 +394,7 @@ class TestCmdGet:
     @patch.object(dmm_mod, "DataMeshManagerProvider")
     def test_get_not_found(self, MockProvider):
         from fluid_build.providers.base import ProviderError
+
         provider_inst = MagicMock()
         provider_inst.verify.side_effect = ProviderError("Not found")
         MockProvider.return_value = provider_inst
@@ -368,6 +407,7 @@ class TestCmdGet:
 # ---------------------------------------------------------------------------
 # 6. Delete command
 # ---------------------------------------------------------------------------
+
 
 class TestCmdDelete:
 
@@ -405,6 +445,7 @@ class TestCmdDelete:
 # 7. Teams command
 # ---------------------------------------------------------------------------
 
+
 class TestCmdTeams:
 
     @patch.object(dmm_mod, "DataMeshManagerProvider")
@@ -434,6 +475,7 @@ class TestCmdTeams:
 # 8. _make_provider wiring
 # ---------------------------------------------------------------------------
 
+
 class TestMakeProvider:
 
     @patch.object(dmm_mod, "DataMeshManagerProvider")
@@ -459,9 +501,10 @@ class TestMakeProvider:
 # 9. Integration: _execute_command dispatch simulation
 # ---------------------------------------------------------------------------
 
+
 class TestExecuteCommandDispatch:
     """Simulate the exact dispatch pattern from cli/__init__.py:432:
-       args.func(args, self.logger.logger if self.logger else LOG)
+    args.func(args, self.logger.logger if self.logger else LOG)
     """
 
     @patch.object(dmm_mod, "load_contract_with_overlay")
@@ -551,7 +594,6 @@ class TestExecuteCommandDispatch:
 
 from fluid_build.providers.datamesh_manager import DataMeshManagerProvider
 
-
 RICH_CONTRACT = {
     "fluidVersion": "0.7.1",
     "kind": "DataProduct",
@@ -586,18 +628,31 @@ RICH_CONTRACT = {
             },
             "schema": {
                 "fields": [
-                    {"name": "customer_id", "type": "string", "required": True,
-                     "description": "Unique ID", "primaryKey": True},
-                    {"name": "full_name", "type": "string",
-                     "description": "Customer name", "classification": "pii"},
+                    {
+                        "name": "customer_id",
+                        "type": "string",
+                        "required": True,
+                        "description": "Unique ID",
+                        "primaryKey": True,
+                    },
+                    {
+                        "name": "full_name",
+                        "type": "string",
+                        "description": "Customer name",
+                        "classification": "pii",
+                    },
                     {"name": "created_at", "type": "timestamp"},
                 ]
             },
             "policy": {
                 "dq": {
                     "rules": [
-                        {"type": "not_null", "description": "ID required",
-                         "selector": "customer_id", "severity": "error"},
+                        {
+                            "type": "not_null",
+                            "description": "ID required",
+                            "selector": "customer_id",
+                            "severity": "error",
+                        },
                     ]
                 }
             },
@@ -705,6 +760,7 @@ class TestDataProductSpecConformance:
 # 11. Server object builder
 # ---------------------------------------------------------------------------
 
+
 class TestBuildServerObject:
 
     def _build(self, section, provider=""):
@@ -770,6 +826,7 @@ class TestBuildServerObject:
 # ---------------------------------------------------------------------------
 # 12. ODCS v3.1.0 data contract builder
 # ---------------------------------------------------------------------------
+
 
 class TestBuildDataContractODCS:
 
@@ -851,6 +908,7 @@ class TestBuildDataContractODCS:
 # 13. DCS 0.9.3 data contract builder (deprecated path)
 # ---------------------------------------------------------------------------
 
+
 class TestBuildDataContractDCS:
 
     def _make_provider(self):
@@ -880,6 +938,7 @@ class TestBuildDataContractDCS:
 # ---------------------------------------------------------------------------
 # 14. Contract format dispatch
 # ---------------------------------------------------------------------------
+
 
 class TestContractFormatDispatch:
 
@@ -922,6 +981,7 @@ class TestContractFormatDispatch:
 # 15. CLI --contract-format flag
 # ---------------------------------------------------------------------------
 
+
 class TestContractFormatCLI:
 
     @pytest.fixture()
@@ -952,9 +1012,15 @@ class TestContractFormatCLI:
         MockProvider.return_value = provider_inst
 
         args = SimpleNamespace(
-            contract=contract_file, overlay=None, dry_run=False,
-            with_contract=True, no_create_team=False, team_id=None,
-            api_key="key", api_url=None, contract_format="dcs",
+            contract=contract_file,
+            overlay=None,
+            dry_run=False,
+            with_contract=True,
+            no_create_team=False,
+            team_id=None,
+            api_key="key",
+            api_url=None,
+            contract_format="dcs",
         )
         dmm_mod._cmd_publish(args, logging.getLogger("test"))
 
@@ -965,6 +1031,7 @@ class TestContractFormatCLI:
 # ---------------------------------------------------------------------------
 # 16. dataContractId wiring on output ports
 # ---------------------------------------------------------------------------
+
 
 class TestDataContractIdWiring:
 
