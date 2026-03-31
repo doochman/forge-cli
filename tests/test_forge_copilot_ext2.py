@@ -34,7 +34,7 @@ class TestAnalyzeRequirementsDeep:
             "complexity": "intermediate",
         }
         s = agent._analyze_requirements(ctx)
-        assert s["recommended_template"] == "ml-pipeline"
+        assert s["recommended_template"] == "ml_pipeline"
         assert "feature_store" in s["recommended_patterns"]
         assert any("MLflow" in a for a in s["architecture_suggestions"])
 
@@ -45,7 +45,7 @@ class TestAnalyzeRequirementsDeep:
             "complexity": "intermediate",
         }
         s = agent._analyze_requirements(ctx)
-        assert s["recommended_template"] == "analytics-dashboard"
+        assert s["recommended_template"] == "analytics"
         assert "dimensional_modeling" in s["recommended_patterns"]
 
     def test_streaming_goal(self, agent):
@@ -55,7 +55,7 @@ class TestAnalyzeRequirementsDeep:
             "complexity": "intermediate",
         }
         s = agent._analyze_requirements(ctx)
-        assert s["recommended_template"] == "streaming-pipeline"
+        assert s["recommended_template"] == "streaming"
         assert "event_sourcing" in s["recommended_patterns"]
         assert any("Kafka" in a for a in s["architecture_suggestions"])
 
@@ -113,7 +113,7 @@ class TestAnalyzeRequirementsDeep:
     def test_default_recommendations(self, agent):
         ctx = {"project_goal": "", "data_sources": "", "complexity": "intermediate"}
         s = agent._analyze_requirements(ctx)
-        assert s["recommended_template"] == "analytics-basic"
+        assert s["recommended_template"] == "analytics"
         assert s["recommended_provider"] == "local"
         assert s["recommended_patterns"] == []
 
@@ -146,7 +146,7 @@ class TestGenerateIntelligentReadme:
     def test_basic_readme(self, agent):
         ctx = {"project_goal": "My Project", "use_case": "analytics"}
         suggestions = {
-            "recommended_template": "analytics-basic",
+            "recommended_template": "analytics",
             "recommended_provider": "local",
             "recommended_patterns": ["dimensional_modeling"],
             "architecture_suggestions": ["Use layered architecture"],

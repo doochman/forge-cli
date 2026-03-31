@@ -192,15 +192,25 @@ class TestCopilotAgent:
         assert suggestions is not None
 
     def test_create_project_success(self):
+        from fluid_build.cli.forge_copilot_runtime import CopilotGenerationResult, DiscoveryReport
+
         agent = self._make_agent()
-        agent.analyze_requirements = MagicMock(
-            return_value={
-                "recommended_template": "starter",
-                "recommended_provider": "local",
-                "patterns": [],
-                "suggestions": {},
-                "practices": [],
-            }
+        agent.generate_project_artifacts = MagicMock(
+            return_value=CopilotGenerationResult(
+                suggestions={
+                    "recommended_template": "starter",
+                    "recommended_provider": "local",
+                    "recommended_patterns": [],
+                    "architecture_suggestions": [],
+                    "best_practices": [],
+                    "technology_stack": [],
+                },
+                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                readme_markdown="# Test Project\n",
+                additional_files={},
+                discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
+                attempt_reports=[],
+            )
         )
         agent._show_ai_analysis = MagicMock()
         agent._create_forge_config = MagicMock(return_value={"name": "test"})
@@ -209,13 +219,142 @@ class TestCopilotAgent:
         result = agent.create_project(Path("/tmp/test"), {"project_goal": "test"})
         assert result is True
 
-    def test_create_project_failure(self):
+    @patch("fluid_build.cli.forge.CopilotMemoryStore")
+    def test_create_project_saves_memory_in_non_interactive_mode_when_requested(self, mock_store_cls):
+        from fluid_build.cli.forge_copilot_runtime import CopilotGenerationResult, DiscoveryReport
+
         agent = self._make_agent()
-        agent.analyze_requirements = MagicMock(
-            return_value={
-                "recommended_template": "starter",
-                "recommended_provider": "local",
-            }
+        mock_store_cls.return_value.load.return_value = None
+        agent.generate_project_artifacts = MagicMock(
+            return_value=CopilotGenerationResult(
+                suggestions={
+                    "recommended_template": "starter",
+                    "recommended_provider": "local",
+                    "recommended_patterns": [],
+                    "architecture_suggestions": [],
+                    "best_practices": [],
+                    "technology_stack": [],
+                },
+                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                readme_markdown="# Test Project\n",
+                additional_files={},
+                discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
+                attempt_reports=[],
+            )
+        )
+        agent._show_ai_analysis = MagicMock()
+        agent._create_forge_config = MagicMock(return_value={"name": "test"})
+        agent._create_with_forge_engine = MagicMock(return_value=True)
+        agent._show_next_steps = MagicMock()
+
+        result = agent.create_project(
+            Path("/tmp/test"),
+            {"project_goal": "test"},
+            {"non_interactive": True, "save_memory": True},
+        )
+
+        assert result is True
+        mock_store_cls.return_value.save.assert_called_once()
+
+    @patch("fluid_build.cli.forge.Confirm.ask", return_value=True)
+    @patch("fluid_build.cli.forge.CopilotMemoryStore")
+    def test_create_project_prompts_before_saving_memory_in_interactive_mode(
+        self, mock_store_cls, mock_confirm
+    ):
+        from fluid_build.cli.forge_copilot_runtime import CopilotGenerationResult, DiscoveryReport
+
+        agent = self._make_agent()
+        mock_store_cls.return_value.load.return_value = None
+        agent.generate_project_artifacts = MagicMock(
+            return_value=CopilotGenerationResult(
+                suggestions={
+                    "recommended_template": "starter",
+                    "recommended_provider": "local",
+                    "recommended_patterns": [],
+                    "architecture_suggestions": [],
+                    "best_practices": [],
+                    "technology_stack": [],
+                },
+                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                readme_markdown="# Test Project\n",
+                additional_files={},
+                discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
+                attempt_reports=[],
+            )
+        )
+        agent._show_ai_analysis = MagicMock()
+        agent._create_forge_config = MagicMock(return_value={"name": "test"})
+        agent._create_with_forge_engine = MagicMock(return_value=True)
+        agent._show_next_steps = MagicMock()
+
+        result = agent.create_project(
+            Path("/tmp/test"),
+            {"project_goal": "test"},
+            {"non_interactive": False},
+        )
+
+        assert result is True
+        mock_confirm.assert_called_once()
+        mock_store_cls.return_value.save.assert_called_once()
+
+    @patch("fluid_build.cli.forge.CopilotMemoryStore")
+    def test_create_project_does_not_save_memory_on_dry_run(self, mock_store_cls):
+        from fluid_build.cli.forge_copilot_runtime import CopilotGenerationResult, DiscoveryReport
+
+        agent = self._make_agent()
+        mock_store_cls.return_value.load.return_value = None
+        agent.generate_project_artifacts = MagicMock(
+            return_value=CopilotGenerationResult(
+                suggestions={
+                    "recommended_template": "starter",
+                    "recommended_provider": "local",
+                    "recommended_patterns": [],
+                    "architecture_suggestions": [],
+                    "best_practices": [],
+                    "technology_stack": [],
+                },
+                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                readme_markdown="# Test Project\n",
+                additional_files={},
+                discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
+                attempt_reports=[],
+            )
+        )
+        agent._show_ai_analysis = MagicMock()
+        agent._create_forge_config = MagicMock(return_value={"name": "test"})
+        agent._create_with_forge_engine = MagicMock(return_value=True)
+        agent._show_next_steps = MagicMock()
+
+        result = agent.create_project(
+            Path("/tmp/test"),
+            {"project_goal": "test"},
+            {"non_interactive": True, "save_memory": True},
+            dry_run=True,
+        )
+
+        assert result is True
+        mock_store_cls.return_value.save.assert_not_called()
+
+    def test_create_project_failure(self):
+        from fluid_build.cli.forge_copilot_runtime import CopilotGenerationResult, DiscoveryReport
+
+        agent = self._make_agent()
+        agent.generate_project_artifacts = MagicMock(
+            return_value=CopilotGenerationResult(
+                suggestions={
+                    "recommended_template": "starter",
+                    "recommended_provider": "local",
+                    "recommended_patterns": [],
+                    "architecture_suggestions": [],
+                    "best_practices": [],
+                    "technology_stack": [],
+                },
+                contract={"name": "test-project", "fluidVersion": "0.7.1"},
+                readme_markdown="# Test Project\n",
+                additional_files={},
+                discovery_report=DiscoveryReport(workspace_roots=["/tmp/test"]),
+                attempt_reports=[],
+            )
         )
         agent._show_ai_analysis = MagicMock()
         agent._create_forge_config = MagicMock(return_value={"name": "test"})
@@ -223,11 +362,108 @@ class TestCopilotAgent:
         result = agent.create_project(Path("/tmp/test"), {"project_goal": "test"})
         assert result is False
 
-    def test_create_project_exception(self):
+    def test_create_project_generation_error(self):
+        from fluid_build.cli.forge_copilot_runtime import CopilotGenerationError
+
         agent = self._make_agent()
-        agent.analyze_requirements = MagicMock(side_effect=RuntimeError("boom"))
+        agent.generate_project_artifacts = MagicMock(
+            side_effect=CopilotGenerationError(
+                "copilot_generation_failed",
+                "Unable to generate a valid contract.",
+                suggestions=["Check your API key"],
+            )
+        )
+        agent._create_with_forge_engine = MagicMock()
         result = agent.create_project(Path("/tmp/test"), {})
         assert result is False
+        agent._create_with_forge_engine.assert_not_called()
+
+    def test_create_project_exception(self):
+        agent = self._make_agent()
+        agent.generate_project_artifacts = MagicMock(side_effect=RuntimeError("boom"))
+        result = agent.create_project(Path("/tmp/test"), {})
+        assert result is False
+
+    @patch("fluid_build.cli.forge.generate_copilot_artifacts")
+    @patch("fluid_build.cli.forge.CopilotMemoryStore")
+    @patch("fluid_build.cli.forge.discover_local_context")
+    @patch("fluid_build.cli.forge.resolve_llm_config")
+    def test_generate_project_artifacts_loads_memory_by_default(
+        self,
+        mock_resolve_llm_config,
+        mock_discover_local_context,
+        mock_store_cls,
+        mock_generate_copilot_artifacts,
+    ):
+        from fluid_build.cli.forge_copilot_memory import CopilotProjectMemory
+        from fluid_build.cli.forge_copilot_runtime import DiscoveryReport, LlmConfig
+
+        agent = self._make_agent()
+        memory = CopilotProjectMemory(
+            schema_version=1,
+            saved_at="2026-03-31T00:00:00Z",
+            project_profile={
+                "template": "analytics",
+                "provider": "local",
+                "domain": "analytics",
+                "owner": "data-team",
+            },
+            conventions={
+                "build_engines": ["sql"],
+                "binding_platforms": ["local"],
+                "binding_formats": ["csv"],
+                "expose_kinds": ["table"],
+                "provider_hints": ["local"],
+                "source_formats": {"csv": 1},
+                "schema_summaries": [],
+            },
+            recent_outcomes=[],
+        )
+        mock_resolve_llm_config.return_value = LlmConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            endpoint="https://api.openai.com/v1/chat/completions",
+            api_key="key",
+        )
+        mock_discover_local_context.return_value = DiscoveryReport(workspace_roots=["/tmp/test"])
+        mock_store_cls.return_value.load.return_value = memory
+
+        agent.generate_project_artifacts({"project_goal": "test"}, {"target_dir": "/tmp/test"})
+
+        assert (
+            mock_generate_copilot_artifacts.call_args.kwargs["project_memory"].preferred_provider
+            == "local"
+        )
+
+    @patch("fluid_build.cli.forge.generate_copilot_artifacts")
+    @patch("fluid_build.cli.forge.CopilotMemoryStore")
+    @patch("fluid_build.cli.forge.discover_local_context")
+    @patch("fluid_build.cli.forge.resolve_llm_config")
+    def test_generate_project_artifacts_bypasses_memory_when_disabled(
+        self,
+        mock_resolve_llm_config,
+        mock_discover_local_context,
+        mock_store_cls,
+        mock_generate_copilot_artifacts,
+    ):
+        from fluid_build.cli.forge_copilot_runtime import DiscoveryReport, LlmConfig
+
+        agent = self._make_agent()
+        mock_resolve_llm_config.return_value = LlmConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            endpoint="https://api.openai.com/v1/chat/completions",
+            api_key="key",
+        )
+        mock_discover_local_context.return_value = DiscoveryReport(workspace_roots=["/tmp/test"])
+
+        agent.generate_project_artifacts(
+            {"project_goal": "test"},
+            {"target_dir": "/tmp/test", "memory": False},
+        )
+
+        mock_store_cls.return_value.load.assert_not_called()
+        assert mock_generate_copilot_artifacts.call_args.kwargs["project_memory"] is None
 
     def test_create_forge_config(self):
         agent = self._make_agent()
@@ -362,6 +598,20 @@ class TestLoadContext:
 
 
 class TestRunFunction:
+    @patch("fluid_build.cli.forge.handle_memory_management", return_value=0)
+    def test_run_memory_management_short_circuits(self, mock_memory):
+        from fluid_build.cli.forge import run
+
+        args = MagicMock()
+        args.help = False
+        args.show_memory = True
+        args.reset_memory = False
+        args.non_interactive = True
+        logger = logging.getLogger("test")
+        result = run(args, logger)
+        assert result == 0
+        mock_memory.assert_called_once()
+
     @patch("fluid_build.cli.forge.run_ai_copilot_mode", return_value=0)
     def test_run_copilot_mode(self, mock_copilot):
         from fluid_build.cli.forge import run
@@ -462,6 +712,60 @@ class TestRunAICopilotMode:
         logger = logging.getLogger("test")
         result = run_ai_copilot_mode(args, logger)
         assert result == 0
+
+
+class TestMemoryManagement:
+    @patch("fluid_build.cli.forge.CopilotMemoryStore")
+    def test_handle_memory_management_show(self, mock_store_cls):
+        from fluid_build.cli.forge import handle_memory_management
+        from fluid_build.cli.forge_copilot_memory import CopilotProjectMemory
+
+        mock_store_cls.return_value.load.return_value = CopilotProjectMemory(
+            schema_version=1,
+            saved_at="2026-03-31T00:00:00Z",
+            project_profile={
+                "template": "analytics",
+                "provider": "local",
+                "domain": "analytics",
+                "owner": "data-team",
+            },
+            conventions={
+                "build_engines": ["sql"],
+                "binding_platforms": ["local"],
+                "binding_formats": ["csv"],
+                "expose_kinds": ["table"],
+                "provider_hints": ["local"],
+                "source_formats": {"csv": 1},
+                "schema_summaries": [],
+            },
+            recent_outcomes=[],
+        )
+        mock_store_cls.return_value.path = Path("/tmp/test/runtime/.state/copilot-memory.json")
+        args = MagicMock()
+        args.target_dir = "/tmp/test"
+        args.reset_memory = False
+        args.show_memory = True
+
+        result = handle_memory_management(args, logging.getLogger("test"))
+
+        assert result == 0
+        mock_store_cls.return_value.load.assert_called_once()
+
+    @patch("fluid_build.cli.forge.CopilotMemoryStore")
+    def test_handle_memory_management_reset(self, mock_store_cls):
+        from fluid_build.cli.forge import handle_memory_management
+
+        mock_store_cls.return_value.delete.return_value = True
+        mock_store_cls.return_value.path = Path("/tmp/test/runtime/.state/copilot-memory.json")
+        args = MagicMock()
+        args.target_dir = "/tmp/test"
+        args.reset_memory = True
+        args.show_memory = False
+
+        result = handle_memory_management(args, logging.getLogger("test"))
+
+        assert result == 0
+        mock_store_cls.return_value.delete.assert_called_once()
 
 
 class TestRunDomainAgentMode:

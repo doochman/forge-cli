@@ -31,6 +31,7 @@ import json
 import logging
 from enum import Enum
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from fluid_build.cli.console import cprint, success, warning
@@ -51,8 +52,25 @@ except ImportError:
 
 from ..blueprints import registry as blueprint_registry
 from ._common import CLIError
+from .forge_copilot_memory import (
+    CopilotMemoryStore,
+    build_copilot_project_memory,
+    resolve_copilot_memory_root,
+    summarize_copilot_memory,
+)
+from .forge_copilot_runtime import (
+    CopilotGenerationError,
+    CopilotGenerationResult,
+    build_capability_matrix,
+    discover_local_context,
+    generate_copilot_artifacts,
+    normalize_provider_name,
+    normalize_template_name,
+    resolve_llm_config,
+)
 
 COMMAND = "forge"
+LOG = logging.getLogger("fluid.cli.forge")
 
 
 # Custom Exceptions for better error handling
@@ -139,6 +157,9 @@ class CopilotAgent(AIAgent):
             description="General-purpose AI assistant for data product creation",
             domain="general",
         )
+        self._project_memory_enabled = True
+        self._project_memory_snapshot = None
+        self._project_memory_path = None
 
     def get_questions(self) -> List[Dict[str, Any]]:
         """Get copilot questions"""
@@ -195,25 +216,25 @@ class CopilotAgent(AIAgent):
 
         # Template selection based on use case
         if "machine learning" in use_case or "ml" in use_case or "ml_pipeline" in use_case:
-            suggestions["recommended_template"] = "mlpipelinetemplate"
+            suggestions["recommended_template"] = "ml_pipeline"
         elif "streaming" in use_case or "real_time" in use_case:
-            suggestions["recommended_template"] = "streamingtemplate"
+            suggestions["recommended_template"] = "streaming"
         elif "etl" in use_case or "pipeline" in use_case:
-            suggestions["recommended_template"] = "etlpipelinetemplate"
+            suggestions["recommended_template"] = "etl_pipeline"
         elif "analytics" in use_case or "reporting" in use_case:
-            suggestions["recommended_template"] = "analyticstemplate"
+            suggestions["recommended_template"] = "analytics"
         else:
-            suggestions["recommended_template"] = "startertemplate"  # Safe fallback
+            suggestions["recommended_template"] = "starter"  # Safe fallback
 
         # Provider selection based on data sources
         if "bigquery" in data_sources or "gcp" in data_sources:
-            suggestions["recommended_provider"] = "gcpprovider"
+            suggestions["recommended_provider"] = "gcp"
         elif "snowflake" in data_sources:
-            suggestions["recommended_provider"] = "snowflakeprovider"
+            suggestions["recommended_provider"] = "snowflake"
         elif "aws" in data_sources:
-            suggestions["recommended_provider"] = "awsprovider"
+            suggestions["recommended_provider"] = "aws"
         else:
-            suggestions["recommended_provider"] = "localprovider"  # Safe for development
+            suggestions["recommended_provider"] = "local"  # Safe for development
 
         # Pattern recommendations
         if complexity == "advanced":
@@ -244,22 +265,67 @@ class CopilotAgent(AIAgent):
 
         return suggestions
 
-    def create_project(self, target_dir: Path, context: Dict[str, Any]) -> bool:
-        """Create intelligent project based on AI analysis"""
+    def generate_project_artifacts(
+        self, context: Dict[str, Any], copilot_options: Optional[Dict[str, Any]] = None
+    ) -> CopilotGenerationResult:
+        """Generate and validate copilot artifacts via the LLM runtime."""
+        options = SimpleNamespace(**(copilot_options or {}))
+        llm_config = resolve_llm_config(options)
+        target_dir = getattr(options, "target_dir", None)
+        target_path = Path(target_dir).expanduser() if target_dir else None
+        discovery_report = discover_local_context(
+            getattr(options, "discovery_path", None),
+            discover=getattr(options, "discover", True),
+            workspace_root=Path.cwd(),
+            logger=LOG,
+        )
+        project_memory = self._load_project_memory(
+            enabled=getattr(options, "memory", True),
+            target_dir=target_path,
+        )
+        return generate_copilot_artifacts(
+            context,
+            llm_config=llm_config,
+            discovery_report=discovery_report,
+            project_memory=project_memory,
+            capability_matrix=build_capability_matrix(),
+            logger=LOG,
+        )
+
+    def create_project(
+        self,
+        target_dir: Path,
+        context: Dict[str, Any],
+        copilot_options: Optional[Dict[str, Any]] = None,
+        dry_run: bool = False,
+    ) -> bool:
+        """Create a project from validated LLM-generated artifacts."""
         try:
-            # Analyze requirements and generate suggestions
-            suggestions = self.analyze_requirements(context)
+            options = dict(copilot_options or {})
+            options.setdefault("target_dir", str(target_dir))
+            generation_result = self.generate_project_artifacts(context, options)
+            suggestions = generation_result.suggestions
 
             # Show AI analysis to user
-            self._show_ai_analysis(context, suggestions)
+            self._show_ai_analysis(context, suggestions, generation_result)
 
             # Create project configuration for ForgeEngine
-            project_config = self._create_forge_config(target_dir, context, suggestions)
+            project_config = self._create_forge_config(
+                target_dir, context, suggestions, generation_result
+            )
 
             # Use ForgeEngine to create and validate the project properly
-            success = self._create_with_forge_engine(project_config)
+            success = self._create_with_forge_engine(project_config, dry_run=dry_run)
 
             if success:
+                self._maybe_save_project_memory(
+                    target_dir=target_dir,
+                    context=context,
+                    suggestions=suggestions,
+                    generation_result=generation_result,
+                    copilot_options=options,
+                    dry_run=dry_run,
+                )
                 # Show next steps
                 self._show_next_steps(target_dir, context, suggestions)
                 return True
@@ -268,6 +334,16 @@ class CopilotAgent(AIAgent):
                     self.console.print("[red]❌ Project creation failed validation[/red]")
                 return False
 
+        except CopilotGenerationError as e:
+            if self.console:
+                self.console.print(f"[red]❌ {e.message}[/red]")
+                for suggestion in e.suggestions:
+                    self.console.print(f"[dim]• {suggestion}[/dim]")
+            else:
+                console_error(e.message)
+                for suggestion in e.suggestions:
+                    cprint(f"  • {suggestion}")
+            return False
         except Exception as e:
             if self.console:
                 self.console.print(f"[red]❌ Failed to create project: {e}[/red]")
@@ -276,23 +352,223 @@ class CopilotAgent(AIAgent):
             return False
 
     def _create_forge_config(
-        self, target_dir: Path, context: Dict[str, Any], suggestions: Dict[str, Any]
+        self,
+        target_dir: Path,
+        context: Dict[str, Any],
+        suggestions: Dict[str, Any],
+        generation_result: Optional[CopilotGenerationResult] = None,
     ) -> Dict[str, Any]:
         """Create configuration for ForgeEngine"""
         goal = context.get("project_goal", "Data Product")
+        contract_name = (
+            generation_result.contract.get("name")
+            if generation_result and generation_result.contract
+            else goal
+        )
 
         # Create project name that will pass validation
-        project_name = self._sanitize_project_name(goal)
+        project_name = self._sanitize_project_name(contract_name)
 
-        return {
+        config = {
             "name": project_name,
-            "description": f"AI-generated {goal}",
-            "template": suggestions["recommended_template"],
-            "provider": suggestions["recommended_provider"],
+            "description": suggestions.get("description") or f"AI-generated {goal}",
+            "domain": suggestions.get("domain") or context.get("domain") or "analytics",
+            "owner": suggestions.get("owner") or "data-team",
+            "template": normalize_template_name(suggestions["recommended_template"]),
+            "provider": normalize_provider_name(suggestions["recommended_provider"]),
             "target_dir": str(target_dir),
             "ai_context": context,
             "ai_suggestions": suggestions,
         }
+
+        if generation_result:
+            config["fluid_version"] = generation_result.contract.get("fluidVersion", "0.7.1")
+            config["copilot_generated_contract"] = generation_result.contract
+            config["copilot_generated_readme"] = generation_result.readme_markdown
+            if generation_result.additional_files:
+                config["copilot_generated_files"] = generation_result.additional_files
+
+        return config
+
+    def _load_project_memory(self, *, enabled: bool, target_dir: Optional[Path]) -> Optional[Any]:
+        """Load repo-local copilot memory when enabled for the current run."""
+        project_root = resolve_copilot_memory_root(Path.cwd(), target_dir=target_dir)
+        store = CopilotMemoryStore(project_root, logger=LOG)
+        self._project_memory_enabled = enabled
+        self._project_memory_path = store.path
+        self._project_memory_snapshot = None
+
+        if not enabled:
+            self._emit_memory_load_feedback()
+            return None
+
+        memory = store.load()
+        if not memory:
+            self._emit_memory_load_feedback()
+            return None
+        self._project_memory_snapshot = memory.to_prompt_snapshot()
+        self._emit_memory_load_feedback()
+        return self._project_memory_snapshot
+
+    def _emit_memory_load_feedback(self) -> None:
+        """Tell the user how project memory will be handled for this run."""
+        if self.console:
+            summary_lines = self._build_memory_status_lines()
+            self.console.print(
+                Panel("\n".join(summary_lines), title="🧠 Project Memory", border_style="cyan")
+            )
+            return
+
+        for line in self._build_memory_status_lines():
+            cprint(line)
+
+    def _build_memory_status_lines(self) -> List[str]:
+        """Build short human-facing status lines for current memory state."""
+        relative_path = self._relative_memory_path()
+        if not self._project_memory_enabled:
+            return [f"Project memory is disabled for this run (`--no-memory`). Path: `{relative_path}`"]
+        if not self._project_memory_snapshot:
+            return [
+                "No project-scoped copilot memory was found yet.",
+                f"Copilot will rely on your current answers and discovery only. Path: `{relative_path}`",
+            ]
+
+        summary = summarize_copilot_memory(self._project_memory_snapshot)
+        lines = [f"Loaded project memory from `{relative_path}`."]
+        profile = ", ".join(
+            [
+                part
+                for part in (
+                    f"template={summary.get('preferred_template')}" if summary.get("preferred_template") else "",
+                    f"provider={summary.get('preferred_provider')}" if summary.get("preferred_provider") else "",
+                    f"domain={summary.get('preferred_domain')}" if summary.get("preferred_domain") else "",
+                )
+                if part
+            ]
+        )
+        if profile:
+            lines.append(f"Saved profile: {profile}")
+        if summary.get("build_engines"):
+            lines.append(f"Remembered build engines: {', '.join(summary['build_engines'])}")
+        lines.append(
+            "Saved schema summaries: "
+            f"{summary.get('schema_summary_count', 0)}; recent successful outcomes: {summary.get('recent_outcome_count', 0)}"
+        )
+        return lines
+
+    def _relative_memory_path(self) -> str:
+        """Render the memory path relative to the current directory when possible."""
+        if not self._project_memory_path:
+            return "runtime/.state/copilot-memory.json"
+        try:
+            return self._project_memory_path.relative_to(Path.cwd()).as_posix()
+        except ValueError:
+            return str(self._project_memory_path)
+
+    def _build_memory_save_preview_lines(self, memory) -> List[str]:
+        """Summarize what will be persisted if the user opts in to saving memory."""
+        summary = summarize_copilot_memory(memory)
+        lines = [f"Forge will save project memory to `{self._relative_memory_path()}` with:"]
+        profile = ", ".join(
+            [
+                part
+                for part in (
+                    f"template={summary.get('preferred_template')}" if summary.get("preferred_template") else "",
+                    f"provider={summary.get('preferred_provider')}" if summary.get("preferred_provider") else "",
+                    f"domain={summary.get('preferred_domain')}" if summary.get("preferred_domain") else "",
+                    f"owner={summary.get('preferred_owner')}" if summary.get("preferred_owner") else "",
+                )
+                if part
+            ]
+        )
+        if profile:
+            lines.append(profile)
+        if summary.get("build_engines"):
+            lines.append(f"build_engines={', '.join(summary['build_engines'])}")
+        if summary.get("source_formats"):
+            source_bits = ", ".join(
+                f"{key}={value}" for key, value in sorted(summary["source_formats"].items())
+            )
+            lines.append(f"source_formats={source_bits}")
+        lines.append(
+            "bounded summaries: "
+            f"{summary.get('schema_summary_count', 0)} schema summaries, {summary.get('recent_outcome_count', 0)} recent outcomes"
+        )
+        return lines
+
+    def _maybe_save_project_memory(
+        self,
+        *,
+        target_dir: Path,
+        context: Dict[str, Any],
+        suggestions: Dict[str, Any],
+        generation_result: CopilotGenerationResult,
+        copilot_options: Dict[str, Any],
+        dry_run: bool,
+    ) -> None:
+        """Persist project-scoped memory only after a successful non-dry-run scaffold."""
+        if dry_run:
+            return
+
+        options = SimpleNamespace(**(copilot_options or {}))
+        store = CopilotMemoryStore(target_dir, logger=LOG)
+        candidate_memory = build_copilot_project_memory(
+            project_root=target_dir,
+            context=context,
+            suggestions=suggestions,
+            contract=generation_result.contract,
+            discovery_report=generation_result.discovery_report,
+            existing_memory=store.load(),
+        )
+
+        should_save = self._should_save_project_memory(options, candidate_memory)
+        if not should_save:
+            if getattr(options, "non_interactive", False) and not getattr(options, "save_memory", False):
+                note = "Project memory was not saved. Re-run with `--save-memory` to remember these conventions."
+                if self.console:
+                    self.console.print(f"[dim]{note}[/dim]")
+                else:
+                    cprint(note)
+            return
+
+        try:
+            store.save(candidate_memory)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("Failed to save copilot memory at %s: %s", store.path, exc)
+            if self.console:
+                self.console.print(
+                    f"[yellow]⚠ Could not save copilot memory to runtime/.state/copilot-memory.json: {exc}[/yellow]"
+                )
+            else:
+                warning(f"Could not save copilot memory: {exc}")
+            return
+
+        if self.console:
+            self.console.print(
+                "[green]✓[/green] Saved project-scoped copilot memory to runtime/.state/copilot-memory.json"
+            )
+        else:
+            success("Saved project-scoped copilot memory to runtime/.state/copilot-memory.json")
+
+    def _should_save_project_memory(self, options: SimpleNamespace, memory) -> bool:
+        """Determine whether this successful run should persist project memory."""
+        if getattr(options, "non_interactive", False):
+            return bool(getattr(options, "save_memory", False))
+
+        prompt = "Save project-scoped copilot memory to runtime/.state/copilot-memory.json?"
+        try:
+            if self.console and RICH_AVAILABLE:
+                preview = "\n".join(self._build_memory_save_preview_lines(memory))
+                self.console.print(
+                    Panel(preview, title="🧠 Save Project Memory?", border_style="cyan")
+                )
+                return Confirm.ask(prompt, default=False, console=self.console)
+            for line in self._build_memory_save_preview_lines(memory):
+                cprint(line)
+            answer = input(f"{prompt} [y/N]: ").strip().lower()
+        except Exception:  # noqa: BLE001
+            return False
+        return answer in {"y", "yes"}
 
     def _sanitize_project_name(self, goal: str) -> str:
         """Create a valid project name from goal"""
@@ -300,7 +576,7 @@ class CopilotAgent(AIAgent):
 
         return sanitize_project_name(goal, strict=False)
 
-    def _create_with_forge_engine(self, project_config: Dict[str, Any]) -> bool:
+    def _create_with_forge_engine(self, project_config: Dict[str, Any], dry_run: bool = False) -> bool:
         """Use ForgeEngine to create and validate project"""
         try:
             from ..forge import ForgeEngine
@@ -318,7 +594,7 @@ class CopilotAgent(AIAgent):
 
                     status.update("[dim]Validating configuration...[/dim]")
                     # Use the engine's run_with_config method for full validation and generation
-                    success = engine.run_with_config(project_config, dry_run=False)
+                    success = engine.run_with_config(project_config, dry_run=dry_run)
 
                     if success:
                         status.update("[green]✓ Project generated successfully[/green]")
@@ -328,7 +604,7 @@ class CopilotAgent(AIAgent):
                 # No Rich available, simple mode
                 cprint("🔧 Generating project...")
                 engine = ForgeEngine()
-                success = engine.run_with_config(project_config, dry_run=False)
+                success = engine.run_with_config(project_config, dry_run=dry_run)
                 if success:
                     cprint("✓ Project generated successfully")
                 return success
@@ -348,7 +624,7 @@ class CopilotAgent(AIAgent):
         complexity = context.get("complexity", "intermediate")
 
         suggestions = {
-            "recommended_template": "analytics-basic",
+            "recommended_template": "analytics",
             "recommended_provider": "local",
             "recommended_patterns": [],
             "architecture_suggestions": [],
@@ -357,17 +633,17 @@ class CopilotAgent(AIAgent):
 
         # Analyze goal keywords
         if any(word in goal for word in ["ml", "machine learning", "model", "prediction"]):
-            suggestions["recommended_template"] = "ml-pipeline"
+            suggestions["recommended_template"] = "ml_pipeline"
             suggestions["recommended_patterns"].append("feature_store")
             suggestions["architecture_suggestions"].append("Consider MLflow for model versioning")
         elif any(word in goal for word in ["dashboard", "reporting", "analytics", "visualization"]):
-            suggestions["recommended_template"] = "analytics-dashboard"
+            suggestions["recommended_template"] = "analytics"
             suggestions["recommended_patterns"].append("dimensional_modeling")
             suggestions["architecture_suggestions"].append(
                 "Use layered architecture (bronze/silver/gold)"
             )
         elif any(word in goal for word in ["real-time", "streaming", "live"]):
-            suggestions["recommended_template"] = "streaming-pipeline"
+            suggestions["recommended_template"] = "streaming"
             suggestions["recommended_patterns"].append("event_sourcing")
             suggestions["architecture_suggestions"].append("Consider Apache Kafka for streaming")
 
@@ -392,7 +668,12 @@ class CopilotAgent(AIAgent):
 
         return suggestions
 
-    def _show_ai_analysis(self, context: Dict[str, Any], suggestions: Dict[str, Any]):
+    def _show_ai_analysis(
+        self,
+        context: Dict[str, Any],
+        suggestions: Dict[str, Any],
+        generation_result: Optional[CopilotGenerationResult] = None,
+    ):
         """Show AI analysis and recommendations"""
         if not self.console:
             return
@@ -419,9 +700,60 @@ class CopilotAgent(AIAgent):
             for practice in suggestions["best_practices"]:
                 analysis_text += f"• {practice}\n"
 
+        memory_lines = self._build_memory_guidance_lines(generation_result)
+        if memory_lines:
+            analysis_text += "\n🧠 **Project Memory Guidance:**\n"
+            for line in memory_lines:
+                analysis_text += f"• {line}\n"
+
         self.console.print(
             Panel(analysis_text.strip(), title="🧠 AI Analysis", border_style="blue")
         )
+
+    def _build_memory_guidance_lines(
+        self,
+        generation_result: Optional[CopilotGenerationResult],
+    ) -> List[str]:
+        """Explain how project memory did or did not influence this run."""
+        lines: List[str] = []
+        if not self._project_memory_enabled:
+            return ["Disabled for this run with `--no-memory`."]
+        if not self._project_memory_snapshot:
+            return ["No saved project memory was available, so only current context and discovery were used."]
+        summary = summarize_copilot_memory(self._project_memory_snapshot)
+        lines.append(
+            "Loaded saved conventions"
+            + (
+                f" (`{summary.get('preferred_template')}` / `{summary.get('preferred_provider')}`)"
+                if summary.get("preferred_template") or summary.get("preferred_provider")
+                else ""
+            )
+            + "."
+        )
+        decision = generation_result.scaffold_decision if generation_result else None
+        if not decision:
+            return lines
+
+        lines.append(
+            f"Template seed: `{decision.template}` from {self._friendly_source_name(decision.template_source)}."
+        )
+        lines.append(
+            f"Provider seed: `{decision.provider}` from {self._friendly_source_name(decision.provider_source)}."
+        )
+        if decision.template_source != "project_memory" or decision.provider_source != "project_memory":
+            lines.append("Saved memory was treated as a soft preference and did not override stronger current signals.")
+        return lines
+
+    def _friendly_source_name(self, source: Optional[str]) -> str:
+        """Render scaffold-decision sources in user-friendly language."""
+        mapping = {
+            "explicit_context": "your explicit input",
+            "current_discovery": "current discovery",
+            "heuristic_context": "your current answers",
+            "project_memory": "saved project memory",
+            "default": "safe defaults",
+        }
+        return mapping.get(source or "", "seed guidance")
 
     async def _generate_intelligent_structure(
         self, target_dir: Path, context: Dict[str, Any], suggestions: Dict[str, Any]
@@ -694,6 +1026,7 @@ For more advanced features, explore:
 • Use `fluid market search` to discover similar data products
 • Run `fluid doctor` if you encounter any issues
 • Check `fluid auth status` for provider authentication
+• Use `fluid forge --show-memory` to inspect saved copilot conventions
         """
 
         self.console.print(Panel(next_steps.strip(), title="🚀 What's Next?", border_style="green"))
@@ -775,6 +1108,61 @@ def register(subparsers: argparse._SubParsersAction):
     # AI-specific options
     p.add_argument("--context", help="Additional context for AI agents (JSON string or file path)")
     p.add_argument(
+        "--llm-provider",
+        choices=["openai", "anthropic", "claude", "gemini", "ollama"],
+        help="LLM provider for copilot mode",
+    )
+    p.add_argument("--llm-model", help="Model identifier for copilot mode")
+    p.add_argument(
+        "--llm-endpoint",
+        help="Exact HTTP endpoint override for the selected LLM adapter",
+    )
+    p.add_argument(
+        "--discover",
+        dest="discover",
+        action="store_true",
+        default=True,
+        help="Inspect local files and manifests before generation",
+    )
+    p.add_argument(
+        "--no-discover",
+        dest="discover",
+        action="store_false",
+        help="Skip local discovery and rely only on explicit context",
+    )
+    p.add_argument(
+        "--discovery-path",
+        help="Additional local file or directory path to scan for metadata-only discovery",
+    )
+    p.add_argument(
+        "--memory",
+        dest="memory",
+        action="store_true",
+        default=True,
+        help="Load project-scoped copilot memory when runtime/.state/copilot-memory.json exists",
+    )
+    p.add_argument(
+        "--no-memory",
+        dest="memory",
+        action="store_false",
+        help="Do not load project-scoped copilot memory for this run",
+    )
+    p.add_argument(
+        "--save-memory",
+        action="store_true",
+        help="Persist project-scoped copilot memory after a successful non-interactive copilot run",
+    )
+    p.add_argument(
+        "--show-memory",
+        action="store_true",
+        help="Show the current project-scoped copilot memory summary and exit",
+    )
+    p.add_argument(
+        "--reset-memory",
+        action="store_true",
+        help="Delete the current project-scoped copilot memory file and exit",
+    )
+    p.add_argument(
         "--domain",
         help="Specific domain for specialized agents (e.g., finance, healthcare, retail)",
     )
@@ -814,6 +1202,103 @@ def get_target_directory(args, default_name: str = "my-fluid-project") -> Path:
     return cwd / default_name
 
 
+def get_cli_arg(args: Any, name: str, default: Any = None) -> Any:
+    """Read argparse-style attributes without letting MagicMock invent values."""
+    if hasattr(args, "__dict__") and name in vars(args):
+        return vars(args)[name]
+    return default
+
+
+def resolve_memory_store(args, logger: logging.Logger) -> CopilotMemoryStore:
+    """Resolve the project-scoped memory store for management actions."""
+    target_dir_value = get_cli_arg(args, "target_dir")
+    target_dir = Path(target_dir_value).expanduser() if target_dir_value else None
+    project_root = resolve_copilot_memory_root(Path.cwd(), target_dir=target_dir)
+    return CopilotMemoryStore(project_root, logger=logger)
+
+
+def handle_memory_management(args, logger: logging.Logger) -> int:
+    """Show or reset project-scoped copilot memory and exit."""
+    console = Console() if RICH_AVAILABLE else None
+    store = resolve_memory_store(args, logger)
+
+    if get_cli_arg(args, "reset_memory", False):
+        deleted = store.delete()
+        if console:
+            if deleted:
+                console.print(
+                    f"[green]✓[/green] Deleted project-scoped copilot memory at [cyan]{store.path}[/cyan]"
+                )
+            else:
+                console.print(
+                    f"[yellow]⚠[/yellow] No project-scoped copilot memory found at [cyan]{store.path}[/cyan]"
+                )
+        else:
+            if deleted:
+                success(f"Deleted project-scoped copilot memory at {store.path}")
+            else:
+                warning(f"No project-scoped copilot memory found at {store.path}")
+        if get_cli_arg(args, "show_memory", False):
+            return handle_memory_management(
+                SimpleNamespace(**{**vars(args), "reset_memory": False}),
+                logger,
+            )
+        return 0
+
+    memory = store.load()
+    if console:
+        if not memory:
+            console.print(
+                f"[yellow]⚠[/yellow] No project-scoped copilot memory found at [cyan]{store.path}[/cyan]"
+            )
+            return 0
+        summary = summarize_copilot_memory(memory)
+        details = [
+            f"Path: `{store.path}`",
+            f"Saved at: {summary.get('saved_at') or 'unknown'}",
+            f"Preferred template: {summary.get('preferred_template') or 'unknown'}",
+            f"Preferred provider: {summary.get('preferred_provider') or 'unknown'}",
+            f"Preferred domain: {summary.get('preferred_domain') or 'unknown'}",
+            f"Preferred owner: {summary.get('preferred_owner') or 'unknown'}",
+            "Build engines: "
+            + (", ".join(summary.get("build_engines") or []) or "none"),
+            "Binding formats: "
+            + (", ".join(summary.get("binding_formats") or []) or "none"),
+            "Provider hints: "
+            + (", ".join(summary.get("provider_hints") or []) or "none"),
+            f"Schema summaries: {summary.get('schema_summary_count', 0)}",
+            f"Recent successful outcomes: {summary.get('recent_outcome_count', 0)}",
+        ]
+        if summary.get("source_formats"):
+            details.append(
+                "Source formats: "
+                + ", ".join(
+                    f"{key}={value}" for key, value in sorted(summary["source_formats"].items())
+                )
+            )
+        console.print(
+            Panel("\n".join(details), title="🧠 Project Memory", border_style="cyan")
+        )
+        return 0
+
+    if not memory:
+        warning(f"No project-scoped copilot memory found at {store.path}")
+        return 0
+    summary = summarize_copilot_memory(memory)
+    cprint(f"Project memory: {store.path}")
+    cprint(f"  template={summary.get('preferred_template') or 'unknown'}")
+    cprint(f"  provider={summary.get('preferred_provider') or 'unknown'}")
+    cprint(f"  domain={summary.get('preferred_domain') or 'unknown'}")
+    cprint(f"  owner={summary.get('preferred_owner') or 'unknown'}")
+    cprint(
+        "  build_engines="
+        + (", ".join(summary.get("build_engines") or []) or "none")
+    )
+    cprint(f"  schema_summaries={summary.get('schema_summary_count', 0)}")
+    cprint(f"  recent_outcomes={summary.get('recent_outcome_count', 0)}")
+    return 0
+
+
 def run(args, logger: logging.Logger) -> int:
     """Enhanced main entry point for forge command with AI agent support"""
     try:
@@ -830,6 +1315,9 @@ def run(args, logger: logging.Logger) -> int:
                 # Fallback to standard help
                 cprint("Run 'fluid forge' to start the interactive wizard")
                 return 0
+
+        if get_cli_arg(args, "show_memory", False) or get_cli_arg(args, "reset_memory", False):
+            return handle_memory_management(args, logger)
 
         # Show welcome message
         if console and not args.non_interactive:
@@ -907,19 +1395,43 @@ def run_ai_copilot_mode(args, logger: logging.Logger) -> int:
             context.update(gather_copilot_context(copilot, console))
         else:
             # Use defaults for non-interactive mode
-            context = {
+            context.update(
+                {
                 "project_goal": "Data Analytics Platform",
                 "data_sources": "Database tables",
                 "use_case": "analytics",
                 "complexity": "intermediate",
-            }
+                }
+            )
+
+        if args.provider:
+            context["provider"] = args.provider
+        if args.template:
+            context["template"] = args.template
+        if args.domain and "domain" not in context:
+            context["domain"] = args.domain
 
         # Determine target directory
         project_name = context.get("project_goal", "my-data-product").lower().replace(" ", "-")
         target_dir = get_target_directory(args, project_name)
 
         # Create project with AI assistance
-        success = copilot.create_project(target_dir, context)
+        success = copilot.create_project(
+            target_dir,
+            context,
+            {
+                "llm_provider": args.llm_provider,
+                "llm_model": args.llm_model,
+                "llm_endpoint": args.llm_endpoint,
+                "discover": args.discover,
+                "discovery_path": args.discovery_path,
+                "memory": args.memory,
+                "save_memory": args.save_memory,
+                "non_interactive": args.non_interactive,
+                "target_dir": str(target_dir),
+            },
+            dry_run=bool(getattr(args, "dry_run", False)),
+        )
 
         return 0 if success else 1
 
@@ -1362,6 +1874,9 @@ def load_context(context_input: str, console: Optional[Console] = None) -> Dict[
             "complexity",
             "team_size",
             "domain",
+            "provider",
+            "owner",
+            "description",
             "technologies",
         }
         invalid_keys = set(context.keys()) - valid_keys

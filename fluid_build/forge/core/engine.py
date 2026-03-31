@@ -52,6 +52,7 @@ from rich.tree import Tree
 from .interfaces import ComplexityLevel, GenerationContext
 from .registry import (
     extension_registry,
+    generator_registry,
     get_registry_status,
     initialize_all_registries,
     provider_registry,
@@ -740,7 +741,7 @@ class ForgeEngine:
 
                 # Generate contract
                 progress.add_task("Generating FLUID contract...", total=None)
-                contract = template.generate_contract(self.generation_context)
+                contract = self._build_contract(template)
                 self._write_contract_file(target_dir, contract)
 
                 # Generate provider configuration
@@ -791,7 +792,7 @@ class ForgeEngine:
             self._preview_structure(structure)
 
             # Preview contract
-            contract = template.generate_contract(self.generation_context)
+            contract = self._build_contract(template)
             self._preview_contract(contract)
 
             return True
@@ -883,6 +884,12 @@ class ForgeEngine:
         with contract_file.open("w") as f:
             yaml.dump(contract, f, default_flow_style=False, sort_keys=False)
 
+    def _build_contract(self, template) -> Dict[str, Any]:
+        """Resolve the contract source of truth for the current generation."""
+        if self.project_config.get("copilot_generated_contract"):
+            return self.project_config["copilot_generated_contract"]
+        return template.generate_contract(self.generation_context)
+
     def _write_provider_config(self, target_dir: Path, config: Dict[str, Any]) -> None:
         """Write provider configuration"""
         config_file = target_dir / "config" / "provider.json"
@@ -892,9 +899,37 @@ class ForgeEngine:
             json.dump(config, f, indent=2)
 
     def _run_generators(self) -> None:
-        """Run additional generators"""
-        # This would run registered generators for additional file creation
-        pass
+        """Run registered generators and write their files to disk."""
+        if not self.generation_context:
+            self._create_generation_context()
+        if not self.generation_context:
+            return
+
+        target_dir = self.generation_context.target_dir
+        generator_names = [
+            name
+            for name in generator_registry.get_dependency_order(generator_registry.list_available())
+            if name != "contract"
+        ]
+
+        for generator_name in generator_names:
+            generator = generator_registry.get(generator_name)
+            if not generator:
+                continue
+
+            is_valid, errors = generator.validate_context(self.generation_context)
+            if not is_valid:
+                logger.warning("Skipping generator %s: %s", generator_name, errors)
+                continue
+
+            generated_files = generator.generate(self.generation_context)
+            for relative_path, content in generated_files.items():
+                self._write_generated_file(target_dir / relative_path, content)
+
+    def _write_generated_file(self, file_path: Path, content: str) -> None:
+        """Write a generator-produced file."""
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content, encoding="utf-8")
 
     def _generate_pipeline_files(self, target_dir: Path) -> None:
         """Generate CI/CD pipeline files"""

@@ -328,6 +328,15 @@ def print_forge_help() -> None:
     options_table.add_row("--interactive, -i", "Force interactive mode")
     options_table.add_row("--dry-run", "Preview without creating files")
     options_table.add_row("--context", "Additional AI context (JSON string or file)")
+    options_table.add_row("--llm-provider", "Built-in copilot adapter (openai/anthropic/gemini/ollama)")
+    options_table.add_row("--llm-model", "Model identifier for copilot mode")
+    options_table.add_row("--llm-endpoint", "Exact HTTP endpoint override for the selected adapter")
+    options_table.add_row("--discover / --no-discover", "Enable or disable local metadata discovery")
+    options_table.add_row("--discovery-path", "Extra local file or directory to scan for metadata")
+    options_table.add_row("--memory / --no-memory", "Enable or disable loading repo-local copilot memory")
+    options_table.add_row("--save-memory", "Persist repo-local copilot memory after a successful non-interactive run")
+    options_table.add_row("--show-memory", "Show the current project-scoped copilot memory summary and exit")
+    options_table.add_row("--reset-memory", "Delete the current project-scoped copilot memory file and exit")
 
     console.print("[bold bright_yellow]⚙️  Options[/bold bright_yellow]")
     console.print(options_table)
@@ -338,7 +347,32 @@ def print_forge_help() -> None:
     console.print()
 
     examples = [
-        ("AI Copilot Mode (Recommended):", "fluid forge", "Interactive AI assistant guides you"),
+        ("AI Copilot Mode (Recommended):", "fluid forge", "Interactive copilot with discovery and validation"),
+        (
+            "OpenAI Copilot:",
+            "fluid forge --mode copilot --llm-provider openai --llm-model gpt-4o-mini",
+            "Generate a validated FLUID contract with OpenAI",
+        ),
+        (
+            "Local Ollama:",
+            "fluid forge --mode copilot --llm-provider ollama --llm-model llama3.1 --llm-endpoint http://localhost:11434/v1/chat/completions",
+            "Use a local model through the built-in Ollama adapter",
+        ),
+        (
+            "Non-Interactive Memory Save:",
+            "fluid forge --mode copilot --non-interactive --save-memory",
+            "Persist project-scoped copilot memory after a successful run",
+        ),
+        (
+            "Inspect Saved Memory:",
+            "fluid forge --show-memory",
+            "See what copilot currently remembers about this project",
+        ),
+        (
+            "Reset Saved Memory:",
+            "fluid forge --reset-memory",
+            "Clear the saved copilot memory for this project",
+        ),
         (
             "Specific Template:",
             "fluid forge --template analytics --provider gcp",
@@ -357,7 +391,7 @@ def print_forge_help() -> None:
         ("Quick Start:", "fluid forge --quickstart", "Use smart defaults, no questions"),
         (
             "Preview First:",
-            "fluid forge --dry-run --template ml-pipeline",
+            "fluid forge --dry-run --template ml_pipeline",
             "See what will be created",
         ),
     ]
@@ -372,9 +406,11 @@ def print_forge_help() -> None:
     workflow_panel = Panel(
         "[bold]Step 1:[/bold] Run [bright_cyan]fluid forge[/bright_cyan]\n"
         "[bold]Step 2:[/bold] Answer a few questions about your project\n"
-        "[bold]Step 3:[/bold] AI analyzes and recommends best setup\n"
-        "[bold]Step 4:[/bold] Review and confirm\n"
-        "[bold]Step 5:[/bold] Get a production-ready project structure\n\n"
+        "[bold]Step 3:[/bold] Copilot discovers local metadata and generates a full contract\n"
+        "[bold]Step 4:[/bold] Forge validates and repairs the contract if needed\n"
+        "[bold]Step 5:[/bold] Forge scaffolds only after validation passes\n"
+        "[bold]Step 6:[/bold] Forge shows how memory influenced the run\n"
+        "[bold]Step 7:[/bold] Save project-scoped memory only if you explicitly opt in\n\n"
         "[dim]💡 First time? Just run [bright_cyan]fluid forge[/bright_cyan] and follow the prompts![/dim]",
         title="[bold bright_green]🚀 How It Works[/bold bright_green]",
         border_style="bright_green",
@@ -388,6 +424,8 @@ def print_forge_help() -> None:
         "💡 [bold]Pro Tips:[/bold]\n\n"
         "  • Start with [bright_cyan]--mode copilot[/bright_cyan] for AI-guided creation\n"
         "  • Use [yellow]--dry-run[/yellow] to preview before generating\n"
+        "  • Use [yellow]--save-memory[/yellow] for non-interactive runs that should remember project conventions\n"
+        "  • Use [yellow]--show-memory[/yellow] to inspect what copilot remembers for this project\n"
         "  • Try [yellow]--quickstart[/yellow] for instant setup with smart defaults\n"
         "  • Explore templates: [bright_cyan]fluid market search[/bright_cyan]\n"
         "  • Get help anytime: [bright_cyan]fluid doctor[/bright_cyan]",

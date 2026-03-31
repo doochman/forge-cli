@@ -144,19 +144,19 @@ class TestCopilotAgentDeepAnalyze:
     def test_ml_keywords(self):
         agent = self._agent()
         s = agent._analyze_requirements({"project_goal": "ML prediction model"})
-        assert s["recommended_template"] == "ml-pipeline"
+        assert s["recommended_template"] == "ml_pipeline"
         assert "feature_store" in s["recommended_patterns"]
 
     def test_dashboard_keywords(self):
         agent = self._agent()
         s = agent._analyze_requirements({"project_goal": "dashboard for reporting"})
-        assert s["recommended_template"] == "analytics-dashboard"
+        assert s["recommended_template"] == "analytics"
         assert "dimensional_modeling" in s["recommended_patterns"]
 
     def test_streaming_keywords(self):
         agent = self._agent()
         s = agent._analyze_requirements({"project_goal": "real-time event processing"})
-        assert s["recommended_template"] == "streaming-pipeline"
+        assert s["recommended_template"] == "streaming"
 
     def test_data_source_gcp(self):
         agent = self._agent()

@@ -33,60 +33,60 @@ def agent():
 class TestAnalyzeRequirements:
     def test_analytics_use_case(self, agent):
         result = agent.analyze_requirements({"use_case": "analytics"})
-        assert result["recommended_template"] == "analyticstemplate"
-        assert result["recommended_provider"] == "localprovider"
+        assert result["recommended_template"] == "analytics"
+        assert result["recommended_provider"] == "local"
 
     def test_reporting_use_case(self, agent):
         result = agent.analyze_requirements({"use_case": "reporting"})
-        assert result["recommended_template"] == "analyticstemplate"
+        assert result["recommended_template"] == "analytics"
 
     def test_ml_pipeline(self, agent):
         result = agent.analyze_requirements({"use_case": "ml_pipeline"})
-        assert result["recommended_template"] == "mlpipelinetemplate"
+        assert result["recommended_template"] == "ml_pipeline"
 
     def test_ml_keyword(self, agent):
         result = agent.analyze_requirements({"use_case": "machine learning model"})
-        assert result["recommended_template"] == "mlpipelinetemplate"
+        assert result["recommended_template"] == "ml_pipeline"
 
     def test_streaming(self, agent):
         result = agent.analyze_requirements({"use_case": "real_time"})
-        assert result["recommended_template"] == "streamingtemplate"
+        assert result["recommended_template"] == "streaming"
 
     def test_etl(self, agent):
         result = agent.analyze_requirements({"use_case": "etl"})
-        assert result["recommended_template"] == "etlpipelinetemplate"
+        assert result["recommended_template"] == "etl_pipeline"
 
     def test_pipeline(self, agent):
         result = agent.analyze_requirements({"use_case": "pipeline"})
-        assert result["recommended_template"] == "etlpipelinetemplate"
+        assert result["recommended_template"] == "etl_pipeline"
 
     def test_unknown_use_case(self, agent):
         result = agent.analyze_requirements({"use_case": "something_else"})
-        assert result["recommended_template"] == "startertemplate"
+        assert result["recommended_template"] == "starter"
 
     def test_default_use_case(self, agent):
         result = agent.analyze_requirements({})
-        assert result["recommended_template"] == "analyticstemplate"
+        assert result["recommended_template"] == "analytics"
 
     def test_gcp_provider(self, agent):
         result = agent.analyze_requirements({"data_sources": "bigquery tables"})
-        assert result["recommended_provider"] == "gcpprovider"
+        assert result["recommended_provider"] == "gcp"
 
     def test_gcp_keyword(self, agent):
         result = agent.analyze_requirements({"data_sources": "gcp storage"})
-        assert result["recommended_provider"] == "gcpprovider"
+        assert result["recommended_provider"] == "gcp"
 
     def test_snowflake_provider(self, agent):
         result = agent.analyze_requirements({"data_sources": "snowflake warehouse"})
-        assert result["recommended_provider"] == "snowflakeprovider"
+        assert result["recommended_provider"] == "snowflake"
 
     def test_aws_provider(self, agent):
         result = agent.analyze_requirements({"data_sources": "aws s3 buckets"})
-        assert result["recommended_provider"] == "awsprovider"
+        assert result["recommended_provider"] == "aws"
 
     def test_local_default_provider(self, agent):
         result = agent.analyze_requirements({"data_sources": "csv files"})
-        assert result["recommended_provider"] == "localprovider"
+        assert result["recommended_provider"] == "local"
 
     def test_advanced_complexity(self, agent):
         result = agent.analyze_requirements({"complexity": "advanced"})
