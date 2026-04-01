@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install ruff black
+      - run: pip install ruff "black==24.10.0"
       - name: Ruff check
         run: ruff check fluid_build/ tests/
       - name: Black check

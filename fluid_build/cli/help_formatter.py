@@ -808,7 +808,7 @@ def print_command_help(parser: argparse.ArgumentParser, command_name: str) -> No
     has_subcommands = False
     sub_choices: list[tuple[str, str]] = []
 
-    for act in (subparser._subparsers._actions if subparser._subparsers else []):
+    for act in subparser._subparsers._actions if subparser._subparsers else []:
         if isinstance(act, argparse._SubParsersAction):
             has_subcommands = True
             # Build help map from _choices_actions (stores the help text)
