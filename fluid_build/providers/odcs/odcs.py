@@ -1203,7 +1203,9 @@ class OdcsProvider(BaseProvider):
         if availability and "availability" not in sla_values:
             try:
                 availability_f = float(availability)
-                sla_values["availability"] = availability_f / 100 if availability_f > 1 else availability_f
+                sla_values["availability"] = (
+                    availability_f / 100 if availability_f > 1 else availability_f
+                )
             except (ValueError, TypeError):
                 pass
 

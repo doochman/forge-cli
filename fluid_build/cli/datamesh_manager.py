@@ -442,5 +442,3 @@ def _print_dry_run(result):
             cprint(f"URL:    {odcs.get('url', '?')}")
             cprint()
             cprint(json.dumps(odcs.get("payload", {}), indent=2))
-
-

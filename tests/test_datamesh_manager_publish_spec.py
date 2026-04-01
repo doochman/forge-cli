@@ -137,7 +137,10 @@ def test_cmd_publish_passes_provider_hint_to_apply():
         "payload": {"id": "sales-product", "kind": "DataProduct", "apiVersion": "v1.0.0"},
     }
 
-    with patch("fluid_build.cli.datamesh_manager.load_contract_with_overlay", return_value=_sample_contract()):
+    with patch(
+        "fluid_build.cli.datamesh_manager.load_contract_with_overlay",
+        return_value=_sample_contract(),
+    ):
         with patch("fluid_build.cli.datamesh_manager._make_provider", return_value=mock_provider):
             with patch("fluid_build.cli.datamesh_manager._print_dry_run"):
                 code = _cmd_publish(args)
@@ -176,7 +179,10 @@ def test_cmd_publish_fail_on_contract_error_returns_non_zero():
         ],
     }
 
-    with patch("fluid_build.cli.datamesh_manager.load_contract_with_overlay", return_value=_sample_contract()):
+    with patch(
+        "fluid_build.cli.datamesh_manager.load_contract_with_overlay",
+        return_value=_sample_contract(),
+    ):
         with patch("fluid_build.cli.datamesh_manager._make_provider", return_value=mock_provider):
             with patch("fluid_build.cli.datamesh_manager._print_publish_result"):
                 code = _cmd_publish(args)

@@ -112,9 +112,9 @@ class TestCmdSignatures:
         fn = getattr(dmm_mod, fn_name)
         sig = inspect.signature(fn)
         params = list(sig.parameters.keys())
-        assert len(params) >= 2, (
-            f"{fn_name} must accept at least 2 params (args, logger), got {params}"
-        )
+        assert (
+            len(params) >= 2
+        ), f"{fn_name} must accept at least 2 params (args, logger), got {params}"
         assert params[0] == "args"
         assert params[1] == "logger"
 
@@ -135,9 +135,9 @@ class TestCmdSignatures:
         fn = getattr(dmm_mod, fn_name)
         sig = inspect.signature(fn)
         logger_param = sig.parameters["logger"]
-        assert logger_param.default is not inspect.Parameter.empty, (
-            f"{fn_name}: logger param must have a default value"
-        )
+        assert (
+            logger_param.default is not inspect.Parameter.empty
+        ), f"{fn_name}: logger param must have a default value"
 
 
 # ---------------------------------------------------------------------------

@@ -557,7 +557,9 @@ class DataMeshManagerProvider(BaseProvider):
             validation_error = None
             is_valid: Optional[bool] = None
             if validate_generated_contracts:
-                is_valid, validation_error = self._validate_generated_odcs_contract(odcs_prov, odcs_body)
+                is_valid, validation_error = self._validate_generated_odcs_contract(
+                    odcs_prov, odcs_body
+                )
                 if is_valid is False:
                     self._log.warning(
                         "Generated ODCS contract failed local validation for expose '%s': %s",
@@ -581,7 +583,9 @@ class DataMeshManagerProvider(BaseProvider):
                 resp = self._request(
                     "PUT", f"/api/datacontracts/{contract_id}", json_body=odcs_body
                 )
-                self._log.info("Published ODCS contract %s (HTTP %s)", contract_id, resp.status_code)
+                self._log.info(
+                    "Published ODCS contract %s (HTTP %s)", contract_id, resp.status_code
+                )
                 entry: Dict[str, Any] = {
                     "contract_id": contract_id,
                     "expose_id": expose_id,
