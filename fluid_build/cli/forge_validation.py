@@ -20,6 +20,8 @@ import re
 from pathlib import Path
 from typing import Optional, Tuple
 
+from .forge_copilot_taxonomy import normalize_use_case
+
 
 def validate_project_name(name: str) -> Tuple[bool, Optional[str]]:
     """Validate project name format
@@ -195,9 +197,22 @@ def validate_context_dict(context: dict) -> Tuple[bool, Optional[str]]:
         "project_goal",
         "data_sources",
         "use_case",
+        "use_case_other",
         "complexity",
         "team_size",
         "domain",
+        "owner_team",
+        "build_engine",
+        "output_kind",
+        "primary_entity",
+        "primary_measures",
+        "primary_dimensions",
+        "time_dimension",
+        "time_granularity",
+        "refresh_cadence",
+        "consumes",
+        "interview_summary",
+        "assumptions_used",
         "technologies",
         "budget",
         "timeline",
@@ -222,9 +237,19 @@ def validate_context_dict(context: dict) -> Tuple[bool, Optional[str]]:
             return False, "project_goal must be a string with at least 5 characters"
 
     if "use_case" in context:
-        valid_use_cases = ["analytics", "ml_pipeline", "data_lake", "real_time", "reporting", "etl"]
-        if context["use_case"] not in valid_use_cases:
-            return False, f"use_case must be one of: {', '.join(valid_use_cases)}"
+        valid_use_cases = [
+            "analytics",
+            "etl_pipeline",
+            "streaming",
+            "ml_pipeline",
+            "data_platform",
+            "other",
+        ]
+        if normalize_use_case(context["use_case"]) is None:
+            return False, f"use_case must resolve to one of: {', '.join(valid_use_cases)}"
+
+    if "use_case_other" in context and not isinstance(context["use_case_other"], str):
+        return False, "use_case_other must be a string when provided"
 
     if "complexity" in context:
         valid_complexity = ["simple", "intermediate", "advanced"]

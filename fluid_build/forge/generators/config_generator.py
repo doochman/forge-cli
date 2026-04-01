@@ -57,6 +57,9 @@ class ConfigGenerator(Generator):
         files["scripts/run-local.sh"] = self._generate_run_script(context)
         files["scripts/run-tests.sh"] = self._generate_test_script(context)
 
+        for relative_path, content in (project_config.get("copilot_generated_files") or {}).items():
+            files[relative_path] = content
+
         return files
 
     def _generate_requirements(self, context: GenerationContext) -> str:

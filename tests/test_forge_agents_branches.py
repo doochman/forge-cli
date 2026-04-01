@@ -25,6 +25,7 @@ from fluid_build.cli.forge_agents import (
     FinanceAgent,
     HealthcareAgent,
     RetailAgent,
+    TelcoAgent,
     get_agent,
     list_agents,
 )
@@ -164,7 +165,7 @@ class TestAIAgentBase:
         agent = AIAgentBase("t", "d", "dom")
         agent.console = MagicMock()
         agent._show_ai_analysis(
-            {},
+            {"project_goal": "Forecasting", "data_sources": "warehouse"},
             {
                 "recommended_template": "t",
                 "recommended_provider": "p",
@@ -172,6 +173,8 @@ class TestAIAgentBase:
             },
         )
         agent.console.print.assert_called()
+        panel = agent.console.print.call_args.args[0]
+        assert panel.title == "🧠 AI Analysis"
 
     def test_show_next_steps_no_console(self):
         agent = AIAgentBase("t", "d", "dom")
@@ -185,6 +188,12 @@ class TestAIAgentBase:
             Path("/tmp"), {}, {"recommended_provider": "gcp", "security_requirements": ["x"]}
         )
         agent.console.print.assert_called()
+        panel = agent.console.print.call_args.args[0]
+        text = str(panel.renderable)
+        assert "fluid validate contract.fluid.yaml" in text
+        assert "fluid plan contract.fluid.yaml --out runtime/plan.json" in text
+        assert "fluid apply runtime/plan.json" in text
+        assert "make validate" not in text
 
     def test_show_next_steps_healthcare(self):
         agent = AIAgentBase("t", "d", "healthcare")
@@ -210,6 +219,8 @@ class TestFinanceAgent:
         qs = agent.get_questions()
         assert len(qs) >= 3
         assert qs[0]["key"] == "product_type"
+        assert qs[0]["choices"][0]["label"] == "Risk Analytics"
+        assert qs[0]["choices"][0]["value"] == "risk_analytics"
 
     def test_analyze_risk_analytics(self):
         agent = FinanceAgent()
@@ -224,6 +235,11 @@ class TestFinanceAgent:
     def test_analyze_fraud_detection(self):
         agent = FinanceAgent()
         result = agent.analyze_requirements({"product_type": "fraud_detection"})
+        assert "ml" in result["recommended_template"]
+
+    def test_analyze_friendly_product_phrase(self):
+        agent = FinanceAgent()
+        result = agent.analyze_requirements({"product_type": "fraud analytics"})
         assert "ml" in result["recommended_template"]
 
     def test_analyze_default(self):
@@ -254,7 +270,7 @@ class TestFinanceAgent:
     def test_analyze_no_compliance(self):
         agent = FinanceAgent()
         result = agent.analyze_requirements({"compliance_requirements": "none"})
-        assert len(result["security_requirements"]) == 0
+        assert any("GDPR-aligned retention" in item for item in result["security_requirements"])
 
 
 # ===================== HealthcareAgent =====================
@@ -268,6 +284,7 @@ class TestHealthcareAgent:
     def test_get_questions(self):
         qs = HealthcareAgent().get_questions()
         assert len(qs) >= 3
+        assert qs[0]["choices"][0]["label"] == "Patient Analytics"
 
     def test_analyze_clinical_research(self):
         result = HealthcareAgent().analyze_requirements({"product_type": "clinical_research"})
@@ -294,6 +311,10 @@ class TestHealthcareAgent:
         result = HealthcareAgent().analyze_requirements({"phi_handling": "deidentified_only"})
         assert any("de-identification" in s for s in result["architecture_suggestions"])
 
+    def test_analyze_friendly_phi_phrase(self):
+        result = HealthcareAgent().analyze_requirements({"phi_handling": "de identified"})
+        assert any("de-identification" in s for s in result["architecture_suggestions"])
+
 
 # ===================== RetailAgent =====================
 
@@ -306,6 +327,7 @@ class TestRetailAgent:
     def test_get_questions(self):
         qs = RetailAgent().get_questions()
         assert len(qs) >= 3
+        assert qs[0]["choices"][0]["label"] == "Customer 360"
 
     def test_analyze_recommendation_engine(self):
         result = RetailAgent().analyze_requirements({"product_type": "recommendation_engine"})
@@ -318,6 +340,10 @@ class TestRetailAgent:
     def test_analyze_customer_360(self):
         result = RetailAgent().analyze_requirements({"product_type": "customer_360"})
         assert "customer360" in result["recommended_template"]
+
+    def test_analyze_friendly_scale_phrase(self):
+        result = RetailAgent().analyze_requirements({"scale": "enterprise scale"})
+        assert result["recommended_provider"] == "gcp"
 
     def test_analyze_default(self):
         result = RetailAgent().analyze_requirements({"product_type": "price_optimization"})
@@ -339,6 +365,41 @@ class TestRetailAgent:
     def test_analyze_medium_scale(self):
         result = RetailAgent().analyze_requirements({"scale": "medium (1M-100M)"})
         assert result["recommended_provider"] == "gcp"
+        assert any("least-privilege RBAC" in item for item in result["security_requirements"])
+
+
+# ===================== TelcoAgent =====================
+
+
+class TestTelcoAgent:
+    def test_init(self):
+        agent = TelcoAgent()
+        assert agent.domain == "telco"
+
+    def test_get_questions(self):
+        qs = TelcoAgent().get_questions()
+        assert len(qs) >= 4
+        assert qs[0]["choices"][0]["label"] == "Customer & Billing Intelligence"
+
+    def test_analyze_customer_billing(self):
+        result = TelcoAgent().analyze_requirements(
+            {"product_type": "customer_billing_intelligence"}
+        )
+        assert "customer360" in result["recommended_template"]
+        assert "party_account_model" in result["recommended_patterns"]
+
+    def test_analyze_friendly_telco_phrase(self):
+        result = TelcoAgent().analyze_requirements({"product_type": "network assurance"})
+        assert "network_topology_analytics" in result["recommended_patterns"]
+
+    def test_analyze_sid_resource_focus(self):
+        result = TelcoAgent().analyze_requirements({"sid_domain_focus": "network inventory"})
+        assert any("ResourceSpecification" in item for item in result["architecture_suggestions"])
+
+    def test_analyze_real_time_operations(self):
+        result = TelcoAgent().analyze_requirements({"real_time_operations": "yes"})
+        assert "streaming_pipeline" in result["recommended_patterns"]
+        assert any("GDPR-aligned retention" in item for item in result["security_requirements"])
 
 
 # ===================== Registry functions =====================
@@ -349,6 +410,7 @@ class TestRegistry:
         assert "finance" in DOMAIN_AGENTS
         assert "healthcare" in DOMAIN_AGENTS
         assert "retail" in DOMAIN_AGENTS
+        assert "telco" in DOMAIN_AGENTS
 
     def test_get_agent_finance(self):
         agent = get_agent("finance")
@@ -362,17 +424,22 @@ class TestRegistry:
         agent = get_agent("retail")
         assert isinstance(agent, RetailAgent)
 
+    def test_get_agent_telco(self):
+        agent = get_agent("telco")
+        assert isinstance(agent, TelcoAgent)
+
     def test_get_agent_not_found(self):
         with pytest.raises(ValueError, match="not found"):
             get_agent("unknown")
 
     def test_list_agents(self):
         agents = list_agents()
-        assert len(agents) == 3
+        assert len(agents) == 4
         names = [a["name"] for a in agents]
         assert "finance" in names
         assert "healthcare" in names
         assert "retail" in names
+        assert "telco" in names
         for a in agents:
             assert "description" in a
             assert "domain" in a

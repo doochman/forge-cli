@@ -63,8 +63,8 @@
 - [x] PR template — `pull_request_template.md` with checklist
 
 ### Release Preparation
-- [x] Version consistent — `pyproject.toml` and `__init__.py` both at `0.7.1`
-- [x] CHANGELOG — `CHANGELOG.md` exists (0.5.7 → 0.7.1 → Unreleased)
+- [x] Version consistent — `pyproject.toml` and `__init__.py` both at `0.7.7`
+- [x] CHANGELOG — `CHANGELOG.md` exists (0.5.7 → 0.7.1 → 0.7.6 → 0.7.7 → Unreleased)
 - [x] Release workflow — `release.yml` publishes to PyPI/TestPyPI on tag push via OIDC
 - [x] Build profiles workflow — `build-profiles.yml` builds alpha/beta/stable on push to main
 
@@ -106,7 +106,7 @@
 - [ ] **Discord/Slack** — no community chat link in README (only GitHub Discussions)
 
 ### Release Preparation
-- [ ] **Version bump to 1.0.0** — still at 0.7.1. Bump `pyproject.toml` + `__init__.py` when ready.
+- [ ] **Version bump to 1.0.0** — still at 0.7.7. Bump `pyproject.toml` + `__init__.py` when ready.
 - [ ] **Launch announcement** — no blog post or announcement content prepared
 
 ---

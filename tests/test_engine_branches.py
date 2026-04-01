@@ -356,6 +356,35 @@ class TestValidateConfiguration:
         result = engine._validate_configuration()
         assert result is False
 
+    @patch("fluid_build.forge.core.engine.template_registry")
+    @patch("fluid_build.forge.core.engine.provider_registry")
+    @patch("fluid_build.forge.core.engine.validation_registry")
+    def test_copilot_provider_validation_is_warning_only(self, mock_val, mock_prov, mock_tmpl):
+        engine = self._make_engine()
+        engine.project_config = {
+            "name": "test",
+            "description": "test desc",
+            "template": "starter",
+            "provider": "gcp",
+            "target_dir": "/tmp/test",
+            "copilot_generated_contract": {"fluidVersion": "0.7.2"},
+        }
+        mock_val.validate_all.return_value = []
+        mock_template = MagicMock()
+        mock_template.validate_configuration.return_value = (True, [])
+        mock_tmpl.get.return_value = mock_template
+        mock_provider = MagicMock()
+        mock_provider.validate_configuration.return_value = (
+            False,
+            ["GCP Project ID is required"],
+        )
+        mock_prov.get.return_value = mock_provider
+        engine._create_generation_context = MagicMock()
+
+        result = engine._validate_configuration()
+
+        assert result is True
+
     def test_validate_exception(self):
         engine = self._make_engine()
         engine._create_generation_context = MagicMock(side_effect=RuntimeError)

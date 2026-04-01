@@ -23,6 +23,11 @@ from __future__ import annotations
 import argparse
 
 from fluid_build import __version__ as _VERSION
+from fluid_build.cli.forge_ui import (
+    FORGE_DIALOG_HINT,
+    FORGE_FLEXIBLE_INPUT_SUMMARY,
+    FORGE_WORKFLOW_STEPS,
+)
 
 try:
     from rich import box
@@ -319,7 +324,7 @@ def print_forge_help() -> None:
     options_table.add_column("Description", style="bright_white")
 
     options_table.add_row("--mode, -m", "Creation mode (copilot/agent/template/blueprint)")
-    options_table.add_row("--agent, -a", "Specific AI agent (finance/healthcare/retail)")
+    options_table.add_row("--agent, -a", "Specific AI agent (finance/healthcare/retail/telco)")
     options_table.add_row("--template, -t", "Project template name")
     options_table.add_row("--provider, -p", "Infrastructure provider (gcp/aws/snowflake/local)")
     options_table.add_row("--blueprint, -b", "Enterprise blueprint name")
@@ -328,6 +333,27 @@ def print_forge_help() -> None:
     options_table.add_row("--interactive, -i", "Force interactive mode")
     options_table.add_row("--dry-run", "Preview without creating files")
     options_table.add_row("--context", "Additional AI context (JSON string or file)")
+    options_table.add_row(
+        "--llm-provider", "Built-in copilot adapter (openai/anthropic/gemini/ollama)"
+    )
+    options_table.add_row("--llm-model", "Model identifier for copilot mode")
+    options_table.add_row("--llm-endpoint", "Exact HTTP endpoint override for the selected adapter")
+    options_table.add_row(
+        "--discover / --no-discover", "Enable or disable local metadata discovery"
+    )
+    options_table.add_row("--discovery-path", "Extra local file or directory to scan for metadata")
+    options_table.add_row(
+        "--memory / --no-memory", "Enable or disable loading repo-local copilot memory"
+    )
+    options_table.add_row(
+        "--save-memory", "Persist repo-local copilot memory after a successful non-interactive run"
+    )
+    options_table.add_row(
+        "--show-memory", "Show the current project-scoped copilot memory summary and exit"
+    )
+    options_table.add_row(
+        "--reset-memory", "Delete the current project-scoped copilot memory file and exit"
+    )
 
     console.print("[bold bright_yellow]⚙️  Options[/bold bright_yellow]")
     console.print(options_table)
@@ -338,7 +364,36 @@ def print_forge_help() -> None:
     console.print()
 
     examples = [
-        ("AI Copilot Mode (Recommended):", "fluid forge", "Interactive AI assistant guides you"),
+        (
+            "AI Copilot Mode (Recommended):",
+            "fluid forge",
+            "Interactive copilot with discovery and validation",
+        ),
+        (
+            "OpenAI Copilot:",
+            "fluid forge --mode copilot --llm-provider openai --llm-model gpt-4o-mini",
+            "Generate a validated FLUID contract with OpenAI",
+        ),
+        (
+            "Local Ollama:",
+            "fluid forge --mode copilot --llm-provider ollama --llm-model llama3.1 --llm-endpoint http://localhost:11434/v1/chat/completions",
+            "Use a local model through the built-in Ollama adapter",
+        ),
+        (
+            "Non-Interactive Memory Save:",
+            "fluid forge --mode copilot --non-interactive --save-memory",
+            "Persist project-scoped copilot memory after a successful run",
+        ),
+        (
+            "Inspect Saved Memory:",
+            "fluid forge --show-memory",
+            "See what copilot currently remembers about this project",
+        ),
+        (
+            "Reset Saved Memory:",
+            "fluid forge --reset-memory",
+            "Clear the saved copilot memory for this project",
+        ),
         (
             "Specific Template:",
             "fluid forge --template analytics --provider gcp",
@@ -350,6 +405,11 @@ def print_forge_help() -> None:
             "Finance-specific best practices",
         ),
         (
+            "TM Forum SID Telco Agent:",
+            "fluid forge --mode agent --agent telco",
+            "Telecom design guidance aligned to TM Forum SID",
+        ),
+        (
             "Enterprise Blueprint:",
             "fluid forge --mode blueprint --blueprint customer-360",
             "Complete enterprise solution",
@@ -357,7 +417,7 @@ def print_forge_help() -> None:
         ("Quick Start:", "fluid forge --quickstart", "Use smart defaults, no questions"),
         (
             "Preview First:",
-            "fluid forge --dry-run --template ml-pipeline",
+            "fluid forge --dry-run --template ml_pipeline",
             "See what will be created",
         ),
     ]
@@ -369,13 +429,17 @@ def print_forge_help() -> None:
 
     # Workflow
     console.print()
+    workflow_text = "\n".join(
+        (
+            f"[bold]Step {index}:[/bold] {step}"
+            if "fluid forge" not in step
+            else f"[bold]Step {index}:[/bold] Run [bright_cyan]fluid forge[/bright_cyan]"
+        )
+        for index, step in enumerate(FORGE_WORKFLOW_STEPS, start=1)
+    )
     workflow_panel = Panel(
-        "[bold]Step 1:[/bold] Run [bright_cyan]fluid forge[/bright_cyan]\n"
-        "[bold]Step 2:[/bold] Answer a few questions about your project\n"
-        "[bold]Step 3:[/bold] AI analyzes and recommends best setup\n"
-        "[bold]Step 4:[/bold] Review and confirm\n"
-        "[bold]Step 5:[/bold] Get a production-ready project structure\n\n"
-        "[dim]💡 First time? Just run [bright_cyan]fluid forge[/bright_cyan] and follow the prompts![/dim]",
+        workflow_text
+        + "\n\n[dim]💡 First time? Just run [bright_cyan]fluid forge[/bright_cyan] and follow the prompts![/dim]",
         title="[bold bright_green]🚀 How It Works[/bold bright_green]",
         border_style="bright_green",
         padding=(1, 2),
@@ -387,9 +451,12 @@ def print_forge_help() -> None:
     tips_panel = Panel(
         "💡 [bold]Pro Tips:[/bold]\n\n"
         "  • Start with [bright_cyan]--mode copilot[/bright_cyan] for AI-guided creation\n"
+        f"  • Interactive prompts accept {FORGE_FLEXIBLE_INPUT_SUMMARY}\n"
         "  • Use [yellow]--dry-run[/yellow] to preview before generating\n"
+        "  • Use [yellow]--save-memory[/yellow] for non-interactive runs that should remember project conventions\n"
+        "  • Use [yellow]--show-memory[/yellow] to inspect what copilot remembers for this project\n"
         "  • Try [yellow]--quickstart[/yellow] for instant setup with smart defaults\n"
-        "  • Explore templates: [bright_cyan]fluid market search[/bright_cyan]\n"
+        "  • Explore templates: [bright_cyan]fluid blueprint list[/bright_cyan]\n"
         "  • Get help anytime: [bright_cyan]fluid doctor[/bright_cyan]",
         border_style="bright_yellow",
         padding=(1, 2),

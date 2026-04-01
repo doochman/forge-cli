@@ -198,11 +198,62 @@ class TestValidateContextDict:
         )
         assert ok is False
 
+    @pytest.mark.parametrize(
+        "use_case",
+        [
+            "analytics",
+            "etl_pipeline",
+            "streaming",
+            "ml_pipeline",
+            "data_platform",
+            "other",
+        ],
+    )
+    def test_valid_canonical_use_cases(self, use_case):
+        ok, err = validate_context_dict(
+            {
+                "project_goal": "Build something",
+                "use_case": use_case,
+            }
+        )
+        assert ok is True
+
+    @pytest.mark.parametrize(
+        "use_case",
+        [
+            "reporting",
+            "real_time",
+            "data_lake",
+            "etl",
+            "machine learning",
+            "Analytics & BI",
+            "Data Platform / Lakehouse",
+        ],
+    )
+    def test_valid_legacy_or_friendly_use_case_aliases(self, use_case):
+        ok, err = validate_context_dict(
+            {
+                "project_goal": "Build something",
+                "use_case": use_case,
+            }
+        )
+        assert ok is True
+
     def test_invalid_complexity(self):
         ok, err = validate_context_dict(
             {
                 "project_goal": "Build something",
                 "complexity": "extreme",
+            }
+        )
+        assert ok is False
+
+    def test_invalid_use_case_other_type(self):
+        ok, err = validate_context_dict(
+            {
+                "project_goal": "Build something",
+                "use_case": "other",
+                "use_case_other": 123,
             }
         )
         assert ok is False
@@ -214,6 +265,7 @@ class TestValidateContextDict:
                 "use_case": "analytics",
                 "complexity": "intermediate",
                 "data_sources": "BigQuery",
+                "use_case_other": "customer 360",
             }
         )
         assert ok is True

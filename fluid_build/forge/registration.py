@@ -82,30 +82,27 @@ def register_builtin_components():
 
     # Register providers
     provider_registry = get_provider_registry()
+    provider_specs = (
+        ("local", ".providers.local", "LocalProvider"),
+        ("gcp", ".providers.gcp", "GCPProvider"),
+        ("aws", ".providers.aws", "AWSProvider"),
+        ("snowflake", ".providers.snowflake", "SnowflakeProvider"),
+    )
+    for provider_name, module_name, class_name in provider_specs:
+        try:
+            module = __import__(f"{__package__}{module_name}", fromlist=[class_name])
+            provider_class = getattr(module, class_name)
+            provider_registry.register(provider_name, provider_class, source="builtin")
+        except Exception as e:
+            LOG.warning("Skipping built-in provider '%s' during registration: %s", provider_name, e)
+
     try:
-        from .providers.local import LocalProvider
-
-        provider_registry.register("local", LocalProvider, source="builtin")
-
-        from .providers.gcp import GCPProvider
-
-        provider_registry.register("gcp", GCPProvider, source="builtin")
-
-        from .providers.aws import AWSProvider
-
-        provider_registry.register("aws", AWSProvider, source="builtin")
-
-        from .providers.snowflake import SnowflakeProvider
-
-        provider_registry.register("snowflake", SnowflakeProvider, source="builtin")
-
         if show_registration:
             success(f"Registered {len(provider_registry.list_available())} providers")
         else:
             LOG.debug(f"Registered {len(provider_registry.list_available())} providers")
-
     except Exception as e:
-        LOG.error(f"Failed to register providers: {e}")
+        LOG.warning("Unable to summarize registered providers: %s", e)
 
     # Register extensions
     extension_registry = get_extension_registry()

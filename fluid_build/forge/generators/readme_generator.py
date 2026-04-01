@@ -28,6 +28,9 @@ class ReadmeGenerator(Generator):
 
     def generate(self, context: GenerationContext) -> Dict[str, str]:
         """Generate README.md file"""
+        if context.project_config.get("copilot_generated_readme"):
+            return {"README.md": context.project_config["copilot_generated_readme"]}
+
         project_config = context.project_config
 
         project_name = project_config.get("name", "FLUID Data Product")

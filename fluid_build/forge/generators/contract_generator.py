@@ -30,6 +30,14 @@ class ContractGenerator(Generator):
         """Generate FLUID contract file"""
         import yaml
 
+        if context.project_config.get("copilot_generated_contract"):
+            contract_yaml = yaml.dump(
+                context.project_config["copilot_generated_contract"],
+                default_flow_style=False,
+                sort_keys=False,
+            )
+            return {"contract.fluid.yaml": contract_yaml}
+
         # Get template to generate contract
         template_name = context.project_config.get("template")
         if not template_name:
