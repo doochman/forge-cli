@@ -39,9 +39,18 @@ import os
 import uuid
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fluid_build.providers.base import BaseProvider, ProviderError
+
+if TYPE_CHECKING:
+    import requests as requests_typing
+
+    RequestsSession = requests_typing.Session
+    RequestsResponse = requests_typing.Response
+else:
+    RequestsSession = Any
+    RequestsResponse = Any
 
 try:
     import requests
@@ -63,6 +72,8 @@ LOG = logging.getLogger(__name__)
 
 _DEFAULT_API_URL = "https://api.entropy-data.com"
 _TIMEOUT = 30  # seconds
+_DEFAULT_DPS_SPECIFICATION = "0.0.1"
+_DEFAULT_ODPS_SPECIFICATION = "odps"
 
 _STATUS_MAP: Dict[str, str] = {
     "draft": "draft",
@@ -106,6 +117,8 @@ class DataMeshManagerProvider(BaseProvider):
 
     # Class-level name — used by the auto-discovery registry.
     name: str = "datamesh-manager"
+    DATA_PRODUCT_SPEC_DPS = _DEFAULT_DPS_SPECIFICATION
+    DATA_PRODUCT_SPEC_ODPS = _DEFAULT_ODPS_SPECIFICATION
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -130,7 +143,7 @@ class DataMeshManagerProvider(BaseProvider):
                 "Install it with:  pip install requests"
             )
 
-        self._session_instance: Optional[requests.Session] = None
+        self._session_instance: Optional[RequestsSession] = None
 
     # ---- BaseProvider abstract methods ------------------------------------
 
@@ -138,10 +151,18 @@ class DataMeshManagerProvider(BaseProvider):
         self, contract: Any, out: Any = None, fmt: str = "yaml", **kw: Any
     ) -> List[Dict[str, Any]]:
         """Return a preview of what *apply* would PUT to Entropy Data."""
+        data_product_specification: Optional[str] = kw.get("data_product_specification")
+        provider_hint: Optional[str] = kw.get("provider_hint")
         contracts = contract if isinstance(contract, list) else [contract]
         actions: List[Dict[str, Any]] = []
         for c in contracts:
-            dp = self._to_data_product(c)
+            dp = self._to_data_product(
+                c,
+                data_product_specification=self._resolve_data_product_specification(
+                    data_product_specification,
+                    provider_hint=provider_hint,
+                ),
+            )
             actions.append(
                 {
                     "action": "PUT",
@@ -172,6 +193,10 @@ class DataMeshManagerProvider(BaseProvider):
         create_team: bool = kw.get("create_team", True)
         publish_contract_flag: bool = kw.get("publish_contract", False)
         contract_format: str = kw.get("contract_format", self.CONTRACT_FORMAT_ODCS)
+        provider_hint: Optional[str] = kw.get("provider_hint")
+        data_product_specification: Optional[str] = kw.get("data_product_specification")
+        validate_generated_contracts: bool = kw.get("validate_generated_contracts", False)
+        validation_mode: str = kw.get("validation_mode", "warn")
 
         self._require_api_key()
 
@@ -186,6 +211,12 @@ class DataMeshManagerProvider(BaseProvider):
                 create_team=create_team,
                 publish_contract=publish_contract_flag,
                 contract_format=contract_format,
+                data_product_specification=self._resolve_data_product_specification(
+                    data_product_specification,
+                    provider_hint=provider_hint,
+                ),
+                validate_generated_contracts=validate_generated_contracts,
+                validation_mode=validation_mode,
             )
             results.append(result)
 
@@ -344,19 +375,39 @@ class DataMeshManagerProvider(BaseProvider):
         create_team: bool = True,
         publish_contract: bool = False,
         contract_format: str = "odcs",
+        data_product_specification: Optional[str] = None,
+        validate_generated_contracts: bool = False,
+        validation_mode: str = "warn",
     ) -> Dict[str, Any]:
-        dp = self._to_data_product(fluid)
-        product_id = dp["id"]
+        dp = self._to_data_product(
+            fluid,
+            data_product_specification=data_product_specification,
+        )
+        product_id = dp.get("id") or self._extract_id(fluid)
+        is_odps_payload = self._is_odps_payload(dp)
 
         # Resolve team
         tid = team_id_override or self._derive_team_id(fluid)
-        dp["teamId"] = tid
+        if is_odps_payload:
+            team_obj = dp.get("team")
+            if not isinstance(team_obj, dict):
+                team_obj = {}
+            team_obj.setdefault("name", tid)
+            dp["team"] = team_obj
+        else:
+            dp["teamId"] = tid
 
-        # Wire dataContractId on output ports when publishing companion contract
+        # Wire contract references on output ports when publishing companion contracts.
+        # IDs must match per-expose publish ids: ``{product_id}.{expose_id}``.
         if publish_contract:
-            contract_id = f"{product_id}-contract"
             for port in dp.get("outputPorts", []):
-                port["dataContractId"] = contract_id
+                if is_odps_payload:
+                    expose_ref = port.get("name") or port.get("id")
+                    if expose_ref:
+                        port["contractId"] = f"{product_id}.{expose_ref}"
+                else:
+                    if not port.get("dataContractId") and port.get("id"):
+                        port["dataContractId"] = f"{product_id}.{port['id']}"
 
         if dry_run:
             result: Dict[str, Any] = {
@@ -388,7 +439,12 @@ class DataMeshManagerProvider(BaseProvider):
 
         # Publish one ODCS data contract per expose, linked via dataContractId
         if publish_contract:
-            odcs_results = self._publish_odcs_per_expose(fluid, product_id)
+            odcs_results = self._publish_odcs_per_expose(
+                fluid,
+                product_id,
+                validate_generated_contracts=validate_generated_contracts,
+                validation_mode=validation_mode,
+            )
             result["odcs_contracts"] = odcs_results
 
         return result
@@ -431,7 +487,12 @@ class DataMeshManagerProvider(BaseProvider):
         return previews
 
     def _publish_odcs_per_expose(
-        self, fluid: Mapping[str, Any], product_id: str
+        self,
+        fluid: Mapping[str, Any],
+        product_id: str,
+        *,
+        validate_generated_contracts: bool = False,
+        validation_mode: str = "warn",
     ) -> List[Dict[str, Any]]:
         """Publish one ODCS data contract for every expose port.
 
@@ -468,45 +529,157 @@ class DataMeshManagerProvider(BaseProvider):
                 self._log.error(
                     "Failed to generate ODCS contract for expose '%s': %s", expose_id, exc
                 )
-                results.append({"contract_id": contract_id, "success": False, "error": str(exc)})
+                results.append(
+                    {
+                        "contract_id": contract_id,
+                        "expose_id": expose_id,
+                        "success": False,
+                        "error": str(exc),
+                        "error_type": "RENDER_FAILED",
+                    }
+                )
                 continue
+
+            payload_stats = self._summarize_odcs_payload(odcs_body)
+            self._log.info(
+                (
+                    "Prepared ODCS contract %s for expose '%s' "
+                    "(schema_objects=%s, properties=%s, servers=%s, sla_properties=%s)"
+                ),
+                contract_id,
+                expose_id,
+                payload_stats["schema_objects"],
+                payload_stats["schema_properties"],
+                payload_stats["servers"],
+                payload_stats["sla_properties"],
+            )
+
+            validation_error = None
+            is_valid: Optional[bool] = None
+            if validate_generated_contracts:
+                is_valid, validation_error = self._validate_generated_odcs_contract(odcs_prov, odcs_body)
+                if is_valid is False:
+                    self._log.warning(
+                        "Generated ODCS contract failed local validation for expose '%s': %s",
+                        expose_id,
+                        validation_error,
+                    )
+                    if validation_mode == "strict":
+                        results.append(
+                            {
+                                "contract_id": contract_id,
+                                "expose_id": expose_id,
+                                "success": False,
+                                "valid": False,
+                                "validation_error": validation_error,
+                                "error_type": "VALIDATION_FAILED",
+                            }
+                        )
+                        continue
 
             try:
                 resp = self._request(
                     "PUT", f"/api/datacontracts/{contract_id}", json_body=odcs_body
                 )
-                self._log.info(
-                    "Published ODCS contract %s (HTTP %s)", contract_id, resp.status_code
-                )
-                results.append(
-                    {
-                        "contract_id": contract_id,
-                        "expose_id": expose_id,
-                        "success": True,
-                        "status_code": resp.status_code,
-                        "url": f"https://app.entropy-data.com/datacontracts/{contract_id}",
-                    }
-                )
+                self._log.info("Published ODCS contract %s (HTTP %s)", contract_id, resp.status_code)
+                entry: Dict[str, Any] = {
+                    "contract_id": contract_id,
+                    "expose_id": expose_id,
+                    "success": True,
+                    "status_code": resp.status_code,
+                    "url": f"{self.api_url}/datacontracts/{contract_id}",
+                }
+                if is_valid is not None:
+                    entry["valid"] = is_valid
+                if validation_error:
+                    entry["validation_error"] = validation_error
+                entry.update(payload_stats)
+                results.append(entry)
             except ProviderError as exc:
                 self._log.error("HTTP error publishing ODCS contract %s: %s", contract_id, exc)
-                results.append({"contract_id": contract_id, "success": False, "error": str(exc)})
+                entry = {
+                    "contract_id": contract_id,
+                    "expose_id": expose_id,
+                    "success": False,
+                    "error": str(exc),
+                    "error_type": "HTTP_FAILED",
+                }
+                if is_valid is not None:
+                    entry["valid"] = is_valid
+                if validation_error:
+                    entry["validation_error"] = validation_error
+                entry.update(payload_stats)
+                results.append(entry)
+
+        success_count = len([r for r in results if r.get("success")])
+        failed_count = len(results) - success_count
+        self._log.info(
+            "ODCS publish summary for %s: %s succeeded, %s failed",
+            product_id,
+            success_count,
+            failed_count,
+        )
 
         return results
 
+    def _validate_generated_odcs_contract(
+        self, odcs_provider: Any, odcs_body: Mapping[str, Any]
+    ) -> tuple[bool, Optional[str]]:
+        """Validate rendered ODCS payload and return (is_valid, error_message)."""
+        try:
+            if hasattr(odcs_provider, "validate_contract"):
+                odcs_provider.validate_contract(odcs_body)
+            else:
+                odcs_provider._validate_odcs(odcs_body)
+            return True, None
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
+
+    @staticmethod
+    def _summarize_odcs_payload(odcs_body: Mapping[str, Any]) -> Dict[str, int]:
+        schema = odcs_body.get("schema", [])
+        servers = odcs_body.get("servers", [])
+        sla_properties = odcs_body.get("slaProperties", [])
+
+        schema_objects = len(schema) if isinstance(schema, list) else 0
+        schema_properties = 0
+        if isinstance(schema, list):
+            for schema_object in schema:
+                if not isinstance(schema_object, Mapping):
+                    continue
+                properties = schema_object.get("properties", [])
+                if isinstance(properties, list):
+                    schema_properties += len(properties)
+
+        return {
+            "schema_objects": schema_objects,
+            "schema_properties": schema_properties,
+            "servers": len(servers) if isinstance(servers, list) else 0,
+            "sla_properties": len(sla_properties) if isinstance(sla_properties, list) else 0,
+        }
+
     # ---- mapping: FLUID -> Entropy Data Product ----------------------------
 
-    def _to_data_product(self, fluid: Mapping[str, Any]) -> Dict[str, Any]:
+    def _to_data_product(
+        self,
+        fluid: Mapping[str, Any],
+        *,
+        data_product_specification: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Map a FLUID contract to the Entropy Data *DataProduct* shape.
 
-        Conforms to Data Product Specification v0.0.1.
+        Conforms to Data Product Specification v0.0.1 by default.
         Reference: ``PUT /api/dataproducts/{id}``
 
         Schema requires:
         - ``id`` at root level
         - ``info.title`` (not ``info.name``)
         - ``info.owner`` (team id)
-        - ``dataProductSpecification: "0.0.1"`` at root
+        - ``dataProductSpecification`` at root (defaults to ``"0.0.1"``)
         """
+        if self._is_odps_spec(data_product_specification):
+            return self._to_data_product_odps(fluid)
+
         meta = fluid.get("metadata", {})
         owner = fluid.get("owner", meta.get("owner", {}))
 
@@ -538,7 +711,7 @@ class DataMeshManagerProvider(BaseProvider):
             info["maturity"] = meta["maturity"]
 
         dp: Dict[str, Any] = {
-            "dataProductSpecification": "0.0.1",
+            "dataProductSpecification": data_product_specification or self.DATA_PRODUCT_SPEC_DPS,
             "id": product_id,
             "info": info,
         }
@@ -577,6 +750,84 @@ class DataMeshManagerProvider(BaseProvider):
             dp["custom"] = custom
 
         return dp
+
+    def _to_data_product_odps(self, fluid: Mapping[str, Any]) -> Dict[str, Any]:
+        """Map FLUID contract to ODPS data product shape for Entropy Data.
+
+        Uses the ODPS-Bitol provider model expected by Entropy Data when
+        organizations are configured as ODPS-only.
+        """
+        try:
+            from fluid_build.providers.odps_standard import OdpsStandardProvider
+        except ImportError as exc:
+            raise ProviderError(
+                "OdpsStandardProvider is required for ODPS data product publish.\n"
+                "Ensure fluid_build.providers.odps_standard is installed."
+            ) from exc
+
+        odps_provider = OdpsStandardProvider()
+        odps_payload = odps_provider.render(self._normalize_fluid_for_odps_standard(fluid))
+
+        # Ensure deterministic id shape compatible with DMM path routing.
+        odps_payload["id"] = self._extract_id(fluid)
+        odps_payload.setdefault("kind", "DataProduct")
+
+        return odps_payload
+
+    @staticmethod
+    def _normalize_fluid_for_odps_standard(fluid: Mapping[str, Any]) -> Dict[str, Any]:
+        """Normalize FLUID structure for ODPS-Bitol converter compatibility."""
+        normalized: Dict[str, Any] = dict(fluid)
+
+        exposes = fluid.get("exposes", [])
+        normalized_exposes: List[Dict[str, Any]] = []
+        if isinstance(exposes, list):
+            for expose in exposes:
+                if not isinstance(expose, Mapping):
+                    continue
+                expose_dict = dict(expose)
+                if not expose_dict.get("id") and expose_dict.get("exposeId"):
+                    expose_dict["id"] = expose_dict["exposeId"]
+                normalized_exposes.append(expose_dict)
+        normalized["exposes"] = normalized_exposes
+
+        return normalized
+
+    @staticmethod
+    def _is_odps_spec(value: Optional[str]) -> bool:
+        spec = str(value or "").strip().lower()
+        return spec in {"odps", "opds"}
+
+    @staticmethod
+    def _is_odps_payload(payload: Mapping[str, Any]) -> bool:
+        return bool(
+            isinstance(payload, Mapping)
+            and "apiVersion" in payload
+            and str(payload.get("kind", "")).lower() == "dataproduct"
+            and "info" not in payload
+        )
+
+    def _resolve_data_product_specification(
+        self,
+        value: Optional[str],
+        *,
+        provider_hint: Optional[str] = None,
+    ) -> str:
+        """Resolve outgoing dataProductSpecification.
+
+        Resolution order:
+        1) explicit value
+        2) ODPS provider hint (``odps``/``opds``)
+        3) default DPS specification
+        """
+        if value:
+            return str(value).strip()
+
+        hint = str(provider_hint or "").strip().lower()
+        if hint in {"odps", "opds"}:
+            return self.DATA_PRODUCT_SPEC_ODPS
+
+        return self.DATA_PRODUCT_SPEC_DPS
 
     # ---- port mapping -----------------------------------------------------
 
@@ -1404,7 +1655,7 @@ class DataMeshManagerProvider(BaseProvider):
 
     # ---- HTTP helpers -----------------------------------------------------
 
-    def _session(self) -> requests.Session:
+    def _session(self) -> RequestsSession:
         if self._session_instance is None:
             s = requests.Session()
             retry = Retry(
@@ -1432,7 +1683,7 @@ class DataMeshManagerProvider(BaseProvider):
         path: str,
         *,
         json_body: Any = None,
-    ) -> requests.Response:
+    ) -> RequestsResponse:
         url = f"{self.api_url}{path}"
         self._log.debug("%s %s", method, url)
         try:
@@ -1447,6 +1698,8 @@ class DataMeshManagerProvider(BaseProvider):
             raise ProviderError(f"Connection failed: {url} — {exc}") from exc
         except requests.Timeout as exc:
             raise ProviderError(f"Request timed out: {url}") from exc
+        except requests.RequestException as exc:
+            raise ProviderError(f"HTTP request failed: {url} — {exc}") from exc
 
         if resp.status_code >= 400:
             body = resp.text[:500]

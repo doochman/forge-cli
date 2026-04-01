@@ -146,7 +146,7 @@ class OdcsProvider(BaseProvider):
 
         # Validate if schema available (optional - can be disabled)
         if self.schema and os.getenv("ODCS_VALIDATE", "false").lower() == "true":
-            self._validate_odcs(odcs_contract)
+            self.validate_contract(odcs_contract)
 
         # Write output if path provided
         if out:
@@ -246,7 +246,7 @@ class OdcsProvider(BaseProvider):
 
         # Validate
         if self.schema:
-            self._validate_odcs(odcs_data)
+            self.validate_contract(odcs_data)
 
         self.logger.info("Converting ODCS contract to FLUID")
 
@@ -1138,7 +1138,7 @@ class OdcsProvider(BaseProvider):
 
         return details
 
-    def _extract_sla_properties(self, fluid: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    def _extract_sla_properties(self, fluid: Mapping[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """
         Extract SLA properties from FLUID contract.
 
@@ -1154,7 +1154,7 @@ class OdcsProvider(BaseProvider):
         1. expose-level ``qos`` block  (FLUID 0.7.1)
         2. ``metadata.update_frequency`` / ``metadata.availability`` (legacy)
         """
-        sla = {}
+        sla_values: Dict[str, Any] = {}
 
         # --- 1. Expose-level qos block (FLUID 0.7.1) -----------------------
         # When scoped to a single expose via render(expose_id=...) there will
@@ -1168,37 +1168,42 @@ class OdcsProvider(BaseProvider):
 
             # availability: "99.5%" → strip % and convert to float
             avail = qos.get("availability")
-            if avail is not None and "availability" not in sla:
+            if avail is not None and "availability" not in sla_values:
                 try:
-                    sla["availability"] = float(str(avail).rstrip("%")) / 100
+                    avail_str = str(avail).strip()
+                    if avail_str.endswith("%"):
+                        sla_values["availability"] = float(avail_str.rstrip("%")) / 100
+                    else:
+                        parsed = float(avail_str)
+                        sla_values["availability"] = parsed / 100 if parsed > 1 else parsed
                 except (ValueError, TypeError):
-                    sla["availability"] = str(avail)  # keep as string if unparseable
+                    sla_values["availability"] = str(avail)
 
             # freshnessSLO: ISO-8601 duration string (e.g. "PT5M") → interval
             freshness = qos.get("freshnessSLO") or qos.get("freshness_slo")
-            if freshness and "interval" not in sla:
-                sla["interval"] = str(freshness)
+            if freshness and "interval" not in sla_values:
+                sla_values["interval"] = str(freshness)
 
             # SLA labels as custom properties
             qos_labels = qos.get("labels", {})
-            if isinstance(qos_labels, dict) and qos_labels and "customProperties" not in sla:
-                sla["customProperties"] = [
-                    {"property": k, "value": v} for k, v in qos_labels.items()
-                ]
+            if isinstance(qos_labels, dict) and qos_labels:
+                for key, value in qos_labels.items():
+                    sla_values.setdefault(f"label:{key}", value)
 
         # --- 2. Metadata-level fallbacks (legacy) ---------------------------
         metadata = fluid.get("metadata", {})
 
         # Update frequency → interval (if not already set from qos)
         update_frequency = metadata.get("update_frequency")
-        if update_frequency and "interval" not in sla:
-            sla["interval"] = update_frequency
+        if update_frequency and "interval" not in sla_values:
+            sla_values["interval"] = update_frequency
 
         # Availability/uptime (if not already set from qos)
         availability = metadata.get("availability")
-        if availability and "availability" not in sla:
+        if availability and "availability" not in sla_values:
             try:
-                sla["availability"] = float(availability)
+                availability_f = float(availability)
+                sla_values["availability"] = availability_f / 100 if availability_f > 1 else availability_f
             except (ValueError, TypeError):
                 pass
 
@@ -1206,11 +1211,22 @@ class OdcsProvider(BaseProvider):
         quality = metadata.get("quality_threshold")
         if quality:
             try:
-                sla["completenessKpi"] = float(quality)
+                sla_values["completenessKpi"] = float(quality)
             except (ValueError, TypeError):
                 pass
 
-        return sla if sla else None
+        if not sla_values:
+            return None
+
+        return [
+            {"property": property_name, "value": value}
+            for property_name, value in sla_values.items()
+            if value is not None
+        ]
+
+    def validate_contract(self, odcs: Mapping[str, Any]) -> None:
+        """Validate an ODCS contract payload against the configured schema."""
+        self._validate_odcs(odcs)
 
     def _extract_quality(self, fluid: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
         """

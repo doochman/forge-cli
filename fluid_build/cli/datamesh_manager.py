@@ -85,6 +85,32 @@ def add_parser(subparsers):
         ),
     )
     pub.add_argument(
+        "--data-product-spec",
+        help=(
+            "Override dataProductSpecification value sent to Entropy Data "
+            "(e.g. 'odps' or '0.0.1')."
+        ),
+    )
+    pub.add_argument(
+        "--validate-generated-contracts",
+        action="store_true",
+        help="Validate generated ODCS contracts locally before PUT.",
+    )
+    pub.add_argument(
+        "--validation-mode",
+        choices=["warn", "strict"],
+        default="warn",
+        help=(
+            "Validation behavior for generated contracts: "
+            "'warn' logs validation issues and continues; 'strict' fails invalid contracts."
+        ),
+    )
+    pub.add_argument(
+        "--fail-on-contract-error",
+        action="store_true",
+        help="Return non-zero exit code if any ODCS contract publish fails.",
+    )
+    pub.add_argument(
         "--api-key",
         help="Entropy Data API key (or set DMM_API_KEY env var)",
     )
@@ -161,6 +187,9 @@ def _cmd_publish(args, logger=None):
         )
         provider = _make_provider(args)
 
+        data_product_spec = getattr(args, "data_product_spec", None)
+        provider_hint = getattr(args, "provider", None)
+
         result = provider.apply(
             contract,
             dry_run=args.dry_run,
@@ -168,13 +197,18 @@ def _cmd_publish(args, logger=None):
             create_team=not getattr(args, "no_create_team", False),
             publish_contract=getattr(args, "with_contract", False),
             contract_format=getattr(args, "contract_format", "odcs"),
+            data_product_specification=data_product_spec,
+            provider_hint=provider_hint,
+            validate_generated_contracts=getattr(args, "validate_generated_contracts", False),
+            validation_mode=getattr(args, "validation_mode", "warn"),
         )
 
         if args.dry_run:
             _print_dry_run(result)
-        else:
-            _print_publish_result(result)
-        return 0
+            return 0
+
+        _print_publish_result(result)
+        return _publish_exit_code(result, args)
 
     except ProviderError as exc:
         console_error(f"Error: {exc}")
@@ -182,6 +216,86 @@ def _cmd_publish(args, logger=None):
     except Exception as exc:
         console_error(f"Error: {exc}")
         return 1
+
+
+def _publish_exit_code(result, args) -> int:
+    """Calculate publish exit code based on ODCS per-contract outcomes."""
+    odcs_contracts = result.get("odcs_contracts", [])
+    if not isinstance(odcs_contracts, list):
+        return 0
+
+    validation_mode = getattr(args, "validation_mode", "warn")
+    fail_on_contract_error = getattr(args, "fail_on_contract_error", False)
+
+    if validation_mode == "strict":
+        if any(contract.get("valid") is False for contract in odcs_contracts):
+            return 1
+
+    if fail_on_contract_error:
+        if any(contract.get("success") is False for contract in odcs_contracts):
+            return 1
+
+    return 0
+
+
+def _failure_reason(odcs_result):
+    if odcs_result.get("valid") is False:
+        return "VALIDATION_FAILED"
+    if odcs_result.get("success") is False:
+        return "HTTP_FAILED"
+    return ""
+
+
+def _print_publish_result(result):
+    """Print a successful publish result."""
+    product_id = result.get("product_id", "?")
+    url = result.get("url", "")
+    if RICH_AVAILABLE:
+        console = Console()
+        lines = [f"[green]✅ Published:[/green] [bold]{product_id}[/bold]"]
+        if url:
+            lines.append(f"[dim]View at:[/dim] {url}")
+        # Legacy single contract (kept for backward compatibility)
+        dc = result.get("data_contract")
+        if dc:
+            lines.append(f"[green]📄 Contract:[/green] {dc.get('contract_id', '?')}")
+            if dc.get("url"):
+                lines.append(f"[dim]View at:[/dim] {dc['url']}")
+        # Per-expose ODCS contracts
+        for odcs in result.get("odcs_contracts", []):
+            status_icon = "✅" if odcs.get("success") else "❌"
+            lines.append(f"[green]{status_icon} ODCS:[/green] {odcs.get('contract_id', '?')}")
+            if odcs.get("url"):
+                lines.append(f"[dim]View at:[/dim] {odcs['url']}")
+            reason = _failure_reason(odcs)
+            if reason:
+                lines.append(f"[yellow]Reason:[/yellow] {reason}")
+            if odcs.get("validation_error"):
+                lines.append(f"[red]Validation:[/red] {odcs['validation_error']}")
+            if not odcs.get("success") and odcs.get("error"):
+                lines.append(f"[red]Error:[/red] {odcs['error']}")
+        console.print(Panel("\n".join(lines), title="Data Mesh Manager", border_style="green"))
+    else:
+        success(f"Published data product: {product_id}")
+        if url:
+            cprint(f"   View at: {url}")
+        dc = result.get("data_contract")
+        if dc:
+            cprint(f"📄 Published data contract: {dc.get('contract_id', '?')}")
+            if dc.get("url"):
+                cprint(f"   View at: {dc['url']}")
+        for odcs in result.get("odcs_contracts", []):
+            icon = "✅" if odcs.get("success") else "❌"
+            cprint(f"{icon} ODCS contract: {odcs.get('contract_id', '?')}")
+            if odcs.get("url"):
+                cprint(f"   View at: {odcs['url']}")
+            reason = _failure_reason(odcs)
+            if reason:
+                cprint(f"   Reason: {reason}")
+            if odcs.get("validation_error"):
+                cprint(f"   Validation: {odcs['validation_error']}")
+            if not odcs.get("success") and odcs.get("error"):
+                cprint(f"   Error: {odcs['error']}")
 
 
 def _cmd_list(args, logger=None):
@@ -330,43 +444,3 @@ def _print_dry_run(result):
             cprint(json.dumps(odcs.get("payload", {}), indent=2))
 
 
-def _print_publish_result(result):
-    """Print a successful publish result."""
-    product_id = result.get("product_id", "?")
-    url = result.get("url", "")
-    if RICH_AVAILABLE:
-        console = Console()
-        lines = [f"[green]✅ Published:[/green] [bold]{product_id}[/bold]"]
-        if url:
-            lines.append(f"[dim]View at:[/dim] {url}")
-        # Legacy single contract (kept for backward compatibility)
-        dc = result.get("data_contract")
-        if dc:
-            lines.append(f"[green]📄 Contract:[/green] {dc.get('contract_id', '?')}")
-            if dc.get("url"):
-                lines.append(f"[dim]View at:[/dim] {dc['url']}")
-        # Per-expose ODCS contracts
-        for odcs in result.get("odcs_contracts", []):
-            status_icon = "✅" if odcs.get("success") else "❌"
-            lines.append(f"[green]{status_icon} ODCS:[/green] {odcs.get('contract_id', '?')}")
-            if odcs.get("url"):
-                lines.append(f"[dim]View at:[/dim] {odcs['url']}")
-            if not odcs.get("success") and odcs.get("error"):
-                lines.append(f"[red]Error:[/red] {odcs['error']}")
-        console.print(Panel("\n".join(lines), title="Data Mesh Manager", border_style="green"))
-    else:
-        success(f"Published data product: {product_id}")
-        if url:
-            cprint(f"   View at: {url}")
-        dc = result.get("data_contract")
-        if dc:
-            cprint(f"📄 Published data contract: {dc.get('contract_id', '?')}")
-            if dc.get("url"):
-                cprint(f"   View at: {dc['url']}")
-        for odcs in result.get("odcs_contracts", []):
-            icon = "✅" if odcs.get("success") else "❌"
-            cprint(f"{icon} ODCS contract: {odcs.get('contract_id', '?')}")
-            if odcs.get("url"):
-                cprint(f"   View at: {odcs['url']}")
-            if not odcs.get("success") and odcs.get("error"):
-                cprint(f"   Error: {odcs['error']}")

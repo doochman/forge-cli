@@ -264,7 +264,7 @@ def validate_command(odcs_file: str):
 
         # Validate using provider
         provider = OdcsProvider()
-        provider._validate_odcs(odcs_data)
+        provider.validate_contract(odcs_data)
 
         click.echo("✓ Validation passed")
 
